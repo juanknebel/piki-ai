@@ -121,3 +121,7 @@ tools/build-release.sh  static builds with musl
 
 Everything with the C standard library plus OpenSSL; HTTP, JSON, SSE and the
 chunked encoding parser are our own.
+
+## License
+
+GPL-2.0. See [LICENSE](LICENSE).
