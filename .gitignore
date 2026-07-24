@@ -1,0 +1,9 @@
+# artefactos de build
+build/
+dist/
+
+# toolchains, tarballs y OpenSSL estático cacheado (ver tools/build-release.sh)
+deps/
+
+# generado por tools/mkcerts.sh
+src/certs.h
