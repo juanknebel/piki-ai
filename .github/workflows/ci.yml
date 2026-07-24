@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write   # needed to create releases on tags
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPENSSL_VER: "3.5.1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL dev
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Run test suite
+        run: make test
+
+  static-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y musl-tools perl
+
+      # Caches both the downloaded tarballs/toolchain and the compiled static
+      # OpenSSL, so only the first run pays the ~5 min OpenSSL build per arch.
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: deps-${{ env.OPENSSL_VER }}-${{ hashFiles('tools/build-release.sh') }}
+
+      - name: Fetch source tarballs
+        run: |
+          mkdir -p deps
+          [ -f deps/openssl-${OPENSSL_VER}.tar.gz ] || \
+            curl -fsSL -o deps/openssl-${OPENSSL_VER}.tar.gz \
+              https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VER}/openssl-${OPENSSL_VER}.tar.gz
+          [ -f deps/i686-linux-musl-cross.tgz ] || \
+            curl -fsSL -o deps/i686-linux-musl-cross.tgz \
+              https://musl.cc/i686-linux-musl-cross.tgz
+
+      - name: Build static binaries (x86_64 + i686)
+        run: make release
+
+      - name: Smoke test
+        run: |
+          file dist/piki-linux-x86_64 | grep -q 'statically linked'
+          file dist/piki-linux-i686   | grep -q 'static-pie linked'
+          ./dist/piki-linux-x86_64 --version
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: piki-linux-binaries
+          path: dist/piki-linux-*
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/piki-linux-x86_64 dist/piki-linux-i686 \
+            --title "$GITHUB_REF_NAME" --generate-notes
