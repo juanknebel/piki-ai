@@ -19,14 +19,45 @@ local servers like **Ollama** or **llama.cpp** (`llama-server`).
 
 ## Build
 
-Development build (dynamic, uses the system OpenSSL):
+### Requirements
+
+For the development build (compiled natively, links against the system
+OpenSSL) you need:
+
+- A C99 compiler (`gcc` or `clang`) and `make`.
+- OpenSSL headers and libraries (`libssl` + `libcrypto`), version 1.1.1 or 3.x.
+- The `openssl` CLI and a system CA bundle (`/etc/ssl/cert.pem`): the build
+  generates `src/certs.h` from it once, via `tools/mkcerts.sh`.
+
+Only the static release build (`make release`) additionally needs `perl`
+(OpenSSL's `Configure`), `musl-gcc`, and the `i686-linux-musl` cross
+toolchain — none of that is required to compile and run natively.
+
+**Void Linux** (i686 or x86_64, glibc or musl):
+
+```sh
+sudo xbps-install -S base-devel openssl-devel ca-certificates
+```
+
+**Slackware** — a full install already includes everything (gcc, make,
+openssl, ca-certificates). On a minimal install:
+
+```sh
+sudo slackpkg install gcc make binutils openssl ca-certificates
+```
+
+**Debian/Ubuntu**: `build-essential libssl-dev ca-certificates openssl` ·
+**Arch**: `base-devel openssl ca-certificates` ·
+**Fedora**: `gcc make openssl-devel ca-certificates openssl`
+
+### Development build (dynamic, uses the system OpenSSL)
 
 ```sh
 make           # produces build/piki
 make test      # runs all suites (normal + AddressSanitizer)
 ```
 
-Static release binaries for Linux (musl + static OpenSSL):
+### Static release build (musl + static OpenSSL)
 
 ```sh
 make release   # produces dist/piki-linux-x86_64 and dist/piki-linux-i686
