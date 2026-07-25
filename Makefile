@@ -29,6 +29,15 @@ all: $(B)/piki $(B)/tlsprobe
 $(B)/piki: $(B)/main.o $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
+# Statically-linked piki against whatever OpenSSL is present (system static
+# libs). Used by CI inside Alpine; override LIBS with `pkg-config --static`.
+# For a portable cross build (x86_64 + i686 from this machine) use
+# `make release` / tools/build-release.sh instead.
+$(B)/piki-static: $(B)/main.o $(OBJS)
+	$(CC) $(CFLAGS) -static -o $@ $^ $(LIBS)
+
+static: $(B)/piki-static
+
 $(B)/tlsprobe: $(B)/tlsprobe.o $(B)/buf.o $(B)/net.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
@@ -123,4 +132,4 @@ clean:
 
 -include $(B)/*.d
 
-.PHONY: all test clean release
+.PHONY: all test clean release static

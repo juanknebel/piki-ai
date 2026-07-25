@@ -14,9 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  OPENSSL_VER: "3.5.1"
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,35 +29,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y musl-tools perl
-
-      # Caches both the downloaded tarballs/toolchain and the compiled static
-      # OpenSSL, so only the first run pays the ~5 min OpenSSL build per arch.
-      - name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: deps-${{ env.OPENSSL_VER }}-${{ hashFiles('tools/build-release.sh') }}
-
-      - name: Fetch source tarballs
+      # Build inside Alpine (musl + static OpenSSL) — one container per arch.
+      # No external toolchain download; the amd64 runner executes the i386
+      # container natively. Matches `make static` from the Makefile.
+      - name: Build static binaries (musl)
         run: |
-          mkdir -p deps
-          [ -f deps/openssl-${OPENSSL_VER}.tar.gz ] || \
-            curl -fsSL -o deps/openssl-${OPENSSL_VER}.tar.gz \
-              https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VER}/openssl-${OPENSSL_VER}.tar.gz
-          [ -f deps/i686-linux-musl-cross.tgz ] || \
-            curl -fsSL -o deps/i686-linux-musl-cross.tgz \
-              https://musl.cc/i686-linux-musl-cross.tgz
-
-      - name: Build static binaries (x86_64 + i686)
-        run: make release
+          mkdir -p dist
+          build() {  # $1 arch  $2 image  $3 platform
+            docker run --rm --platform "$3" -v "$PWD":/src -w /src "$2" sh -c '
+              apk add --no-cache gcc make musl-dev openssl-dev \
+                openssl-libs-static zlib-static pkgconf &&
+              make clean &&
+              make static LIBS="$(pkg-config --static --libs openssl)"'
+            cp build/piki-static "dist/piki-linux-$1"
+          }
+          build x86_64 alpine:3.20      linux/amd64
+          build i686   i386/alpine:3.20 linux/386
 
       - name: Smoke test
         run: |
-          file dist/piki-linux-x86_64 | grep -q 'statically linked'
-          file dist/piki-linux-i686   | grep -q 'static-pie linked'
+          file dist/piki-linux-x86_64 | grep -q 'ELF 64-bit.*statically linked'
+          file dist/piki-linux-i686   | grep -q 'ELF 32-bit.*statically linked'
           ./dist/piki-linux-x86_64 --version
+          ./dist/piki-linux-i686 --version
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
