@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "api.h"
 #include "buf.h"
@@ -137,7 +138,8 @@ static int print_delta(const char *text, void *user)
 
 static int stream_turn(const provider_t *pv, const char *model,
                        const chat_t *chat, long max_history, int web,
-                       print_ctx *pc, char *err, size_t errlen)
+                       token_usage *usage, print_ctx *pc,
+                       char *err, size_t errlen)
 {
     chat_msg *win;
     size_t wn;
@@ -151,7 +153,7 @@ static int stream_turn(const provider_t *pv, const char *model,
     wn = chat_window(chat, (size_t)max_history, win, chat->n + 1);
     memset(pc, 0, sizeof *pc);
     buf_init(&pc->acc);
-    rc = api_chat_stream(pv, model, win, wn, web, print_delta, pc,
+    rc = api_chat_stream(pv, model, win, wn, web, usage, print_delta, pc,
                          err, errlen);
     if (pc->got_any && !pc->last_was_nl) {
         putchar('\n');
@@ -195,13 +197,19 @@ static int confirm(const char *what)
  * in final (for the history). */
 static int agent_turn(const provider_t *pv, const char *model,
                       const chat_t *chat, long max_history, int web,
-                      buf_t *final, char *err, size_t errlen)
+                      token_usage *usage, buf_t *final,
+                      char *err, size_t errlen)
 {
     buf_t msgs;
     chat_msg *win;
     size_t wn, i;
     int step, ret = -1;
     int first = 1;
+
+    if (usage) {
+        usage->prompt_tokens = 0;
+        usage->completion_tokens = 0;
+    }
 
     /* initial message array from the history window */
     buf_init(&msgs);
@@ -225,8 +233,16 @@ static int agent_turn(const provider_t *pv, const char *model,
         int rc;
 
         buf_putc(&msgs, ']');
-        rc = api_agent_turn(pv, model, msgs.data, TOOLS_SCHEMA, web,
-                            &turn, err, errlen);
+        {
+            token_usage step_u = {0, 0};
+
+            rc = api_agent_turn(pv, model, msgs.data, TOOLS_SCHEMA, web,
+                                &step_u, &turn, err, errlen);
+            if (usage) {
+                usage->prompt_tokens += step_u.prompt_tokens;
+                usage->completion_tokens += step_u.completion_tokens;
+            }
+        }
         msgs.len--;              /* reopen the array */
         msgs.data[msgs.len] = '\0';
         if (rc != 0) {
@@ -343,6 +359,8 @@ typedef struct {
     long max_history;
     int tools_on;
     int web;
+    long sent_total;   /* prompt tokens accumulated this session */
+    long recv_total;   /* completion tokens accumulated this session */
 } repl_state;
 
 /* Processes a line starting with '/'. Returns 1 continue, 0 quit. */
@@ -527,6 +545,30 @@ static void complete_command(const char *line, char ***out, size_t *n,
     }
 }
 
+/* Status line printed above each prompt: cwd, model, and session tokens. */
+static void print_status(const repl_state *st)
+{
+    char cwd[1024];
+    const char *home = getenv("HOME");
+    const char *dir = cwd;
+    char abbrev[1040];
+
+    if (!getcwd(cwd, sizeof cwd))
+        dir = "?";
+    else if (home && *home) {
+        size_t hl = strlen(home);
+
+        if (strncmp(cwd, home, hl) == 0 &&
+            (cwd[hl] == '/' || cwd[hl] == '\0')) {
+            snprintf(abbrev, sizeof abbrev, "~%s", cwd + hl);
+            dir = abbrev;
+        }
+    }
+    printf("%s%s | %s%s | up %ld dn %ld%s\n",
+           C_DIM, dir, st->model, st->web ? " [web]" : "",
+           st->sent_total, st->recv_total, C_RESET);
+}
+
 static void run_repl(repl_state *st, history *h)
 {
     buf_t line;
@@ -543,7 +585,12 @@ static void run_repl(repl_state *st, history *h)
         const char *prompt = st->web
             ? (use_color ? "\033[1;36mweb> \033[0m" : "web> ")
             : C_PROMPT;
-        int rc = term_readline(prompt, &line, h, complete_command, NULL);
+        token_usage tu = {0, 0};
+        int rc;
+
+        if (term_is_tty())
+            print_status(st);
+        rc = term_readline(prompt, &line, h, complete_command, NULL);
 
         if (rc == 0)
             break;               /* Ctrl-D */
@@ -575,7 +622,7 @@ static void run_repl(repl_state *st, history *h)
 
             buf_init(&final);
             rc = agent_turn(st->pv, st->model, st->chat,
-                            st->max_history, st->web, &final,
+                            st->max_history, st->web, &tu, &final,
                             err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", final.data);
@@ -592,7 +639,7 @@ static void run_repl(repl_state *st, history *h)
             print_ctx pc;
 
             rc = stream_turn(st->pv, st->model, st->chat,
-                             st->max_history, st->web, &pc,
+                             st->max_history, st->web, &tu, &pc,
                              err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", pc.acc.data);
@@ -609,6 +656,8 @@ static void run_repl(repl_state *st, history *h)
             }
             buf_free(&pc.acc);
         }
+        st->sent_total += tu.prompt_tokens;
+        st->recv_total += tu.completion_tokens;
     }
     buf_free(&line);
 }
@@ -753,13 +802,13 @@ int main(int argc, char **argv)
 
             buf_init(&final);
             rc = agent_turn(&pv, model, &chat, cfg.max_history, web,
-                            &final, err, sizeof err);
+                            NULL, &final, err, sizeof err);
             buf_free(&final);
         } else {
             print_ctx pc;
 
             rc = stream_turn(&pv, model, &chat, cfg.max_history, web,
-                             &pc, err, sizeof err);
+                             NULL, &pc, err, sizeof err);
             buf_free(&pc.acc);
         }
         chat_free(&chat);
@@ -791,6 +840,8 @@ int main(int argc, char **argv)
         st.max_history = cfg.max_history;
         st.tools_on = tools_on;
         st.web = web;
+        st.sent_total = 0;
+        st.recv_total = 0;
         run_repl(&st, &h);
 
         if (hpath[0])

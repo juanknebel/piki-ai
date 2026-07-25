@@ -20,6 +20,12 @@ typedef struct {
     const char *content;
 } chat_msg;
 
+/* Token accounting reported by the API (0 if the provider omits it). */
+typedef struct {
+    long prompt_tokens;
+    long completion_tokens;
+} token_usage;
+
 /* Non-streaming chat: sends the conversation and appends the model's
  * response to out. 0 ok, -1 error (description in err), -2 interrupted. */
 int api_chat(const provider_t *pv, const char *model,
@@ -30,10 +36,12 @@ int api_chat(const provider_t *pv, const char *model,
  * continue; nonzero cuts the stream (api_chat_stream returns 0). */
 typedef int (*api_on_delta)(const char *text, void *user);
 
-/* Chat with SSE streaming. web enables OpenRouter's web-search plugin.
+/* Chat with SSE streaming. web enables OpenRouter's web-search plugin;
+ * usage (may be NULL) receives the token counts for this call.
  * 0 ok, -1 error (err), -2 interrupted. */
 int api_chat_stream(const provider_t *pv, const char *model,
                     const chat_msg *msgs, size_t nmsgs, int web,
+                    token_usage *usage,
                     api_on_delta on_delta, void *user,
                     char *err, size_t errlen);
 
@@ -66,6 +74,7 @@ void api_turn_free(api_turn *t);
  * 0 ok, -1 error (err), -2 interrupted. */
 int api_agent_turn(const provider_t *pv, const char *model,
                    const char *messages_json, const char *tools_json,
-                   int web, api_turn *out, char *err, size_t errlen);
+                   int web, token_usage *usage, api_turn *out,
+                   char *err, size_t errlen);
 
 #endif /* PIKI_API_H */

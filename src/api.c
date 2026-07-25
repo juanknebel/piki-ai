@@ -32,9 +32,22 @@ static void build_body(buf_t *b, const char *model,
         buf_putc(b, '}');
     }
     buf_puts(b, "]");
+    if (stream)   /* ask for token usage in the final SSE event */
+        buf_puts(b, ",\"stream_options\":{\"include_usage\":true}");
     if (web)
         buf_puts(b, WEB_PLUGIN);
     buf_putc(b, '}');
+}
+
+/* Reads prompt_tokens/completion_tokens from a "usage" object into u. */
+static void read_usage(json_val *usage_obj, token_usage *u)
+{
+    if (!usage_obj || !u)
+        return;
+    u->prompt_tokens = (long)json_num(
+        json_get(usage_obj, "prompt_tokens"), u->prompt_tokens);
+    u->completion_tokens = (long)json_num(
+        json_get(usage_obj, "completion_tokens"), u->completion_tokens);
 }
 
 static const char *status_hint(int status)
@@ -264,7 +277,8 @@ static char *dup_or_empty(const char *s)
 
 int api_agent_turn(const provider_t *pv, const char *model,
                    const char *messages_json, const char *tools_json,
-                   int web, api_turn *out, char *err, size_t errlen)
+                   int web, token_usage *usage, api_turn *out,
+                   char *err, size_t errlen)
 {
     buf_t body, path, resp;
     net_conn *c = NULL;
@@ -272,6 +286,10 @@ int api_agent_turn(const provider_t *pv, const char *model,
     http_resp r;
     int rc, ret = -1;
 
+    if (usage) {
+        usage->prompt_tokens = 0;
+        usage->completion_tokens = 0;
+    }
     api_turn_init(out);
     buf_init(&body);
     buf_init(&path);
@@ -323,6 +341,7 @@ int api_agent_turn(const provider_t *pv, const char *model,
 
         if (!v)
             goto done;
+        read_usage(json_get(v, "usage"), usage);
         msg = json_get(v, "choices.0.message");
         if (!msg) {
             snprintf(err, errlen, "response has no choices[0].message");
@@ -377,6 +396,7 @@ typedef struct {
     int done;        /* we saw data: [DONE] */
     int got_error;   /* the stream carried {"error":...} */
     int user_stop;   /* the callback requested to cut */
+    token_usage usage;
     char *err;
     size_t errlen;
 } stream_ctx;
@@ -404,6 +424,7 @@ static int on_event(const char *data, void *user)
         json_doc_free(doc);
         return 1;
     }
+    read_usage(json_get(v, "usage"), &sc->usage);  /* final chunk carries it */
     delta = json_str(json_get(v, "choices.0.delta.content"));
     if (delta && *delta) {
         rc = sc->on_delta(delta, sc->user);
@@ -416,6 +437,7 @@ static int on_event(const char *data, void *user)
 
 int api_chat_stream(const provider_t *pv, const char *model,
                     const chat_msg *msgs, size_t nmsgs, int web,
+                    token_usage *usage,
                     api_on_delta on_delta, void *user,
                     char *err, size_t errlen)
 {
@@ -509,6 +531,8 @@ int api_chat_stream(const provider_t *pv, const char *model,
     ret = 0;
 
 done:
+    if (usage && ret == 0)
+        *usage = sc.usage;
     sse_free(&sp);
     if (c)
         net_close(c);
