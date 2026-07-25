@@ -108,7 +108,16 @@ PIKI_BASE_URL=http://192.168.1.10:11434/v1 piki -m llama3.2 "hi"
 ```
 
 Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use),
-`--version`, `--help`.
+`-w` (web search), `--version`, `--help`.
+
+### Web search
+
+`-w` (or `/web` in the REPL) enables OpenRouter's web-search plugin, so the
+model can answer with up-to-date information. When active, the REPL prompt
+changes to `web>` and the banner shows `[web]`. Web search is billed
+separately by OpenRouter. Equivalent to appending `:online` to the model
+slug (e.g. `-m anthropic/claude-haiku-4.5:online`), which also works without
+the flag.
 
 ### REPL commands
 
@@ -116,6 +125,7 @@ Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use),
 /model [id]    show or change the model
 /models        list the provider's models
 /tools         enable/disable tool use
+/web           enable/disable web search
 /save <file>   save the conversation (JSON)
 /load <file>   load a conversation
 /new           start a new conversation

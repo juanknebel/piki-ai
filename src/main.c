@@ -46,11 +46,12 @@ static void on_sigint(int sig)
 
 static void usage(void)
 {
-    fputs("usage: piki [-m model] [-p provider] [-s system_prompt] [-t] "
-          "[\"question\"]\n"
+    fputs("usage: piki [-m model] [-p provider] [-s system_prompt] "
+          "[-t] [-w] [\"question\"]\n"
           "     with no question it enters interactive mode (/help for "
           "commands)\n"
           "     -t enables tool use (read/write files, run commands)\n"
+          "     -w enables OpenRouter web search\n"
           "config: ~/.config/piki/config\n"
           "env: OPENROUTER_API_KEY, PIKI_BASE_URL\n"
           "\n" PIKI_REPO "\n", stderr);
@@ -135,7 +136,7 @@ static int print_delta(const char *text, void *user)
 }
 
 static int stream_turn(const provider_t *pv, const char *model,
-                       const chat_t *chat, long max_history,
+                       const chat_t *chat, long max_history, int web,
                        print_ctx *pc, char *err, size_t errlen)
 {
     chat_msg *win;
@@ -150,7 +151,8 @@ static int stream_turn(const provider_t *pv, const char *model,
     wn = chat_window(chat, (size_t)max_history, win, chat->n + 1);
     memset(pc, 0, sizeof *pc);
     buf_init(&pc->acc);
-    rc = api_chat_stream(pv, model, win, wn, print_delta, pc, err, errlen);
+    rc = api_chat_stream(pv, model, win, wn, web, print_delta, pc,
+                         err, errlen);
     if (pc->got_any && !pc->last_was_nl) {
         putchar('\n');
         fflush(stdout);
@@ -192,7 +194,7 @@ static int confirm(const char *what)
  * Returns 0 ok, -1 error (err), -2 interrupted. Leaves the final response
  * in final (for the history). */
 static int agent_turn(const provider_t *pv, const char *model,
-                      const chat_t *chat, long max_history,
+                      const chat_t *chat, long max_history, int web,
                       buf_t *final, char *err, size_t errlen)
 {
     buf_t msgs;
@@ -223,7 +225,7 @@ static int agent_turn(const provider_t *pv, const char *model,
         int rc;
 
         buf_putc(&msgs, ']');
-        rc = api_agent_turn(pv, model, msgs.data, TOOLS_SCHEMA,
+        rc = api_agent_turn(pv, model, msgs.data, TOOLS_SCHEMA, web,
                             &turn, err, errlen);
         msgs.len--;              /* reopen the array */
         msgs.data[msgs.len] = '\0';
@@ -316,12 +318,13 @@ done:
 
 /* --- REPL ------------------------------------------------------------- */
 
-static void repl_help(int tools_on)
+static void repl_help(int tools_on, int web_on)
 {
     printf("commands:\n"
            "  /model [id]    show or change the model\n"
            "  /models        list the provider's models\n"
            "  /tools         toggle tool use (now: %s)\n"
+           "  /web           toggle web search (now: %s)\n"
            "  /save <file>   save the conversation\n"
            "  /load <file>   load a conversation\n"
            "  /new           start a new conversation\n"
@@ -329,7 +332,7 @@ static void repl_help(int tools_on)
            "  /quit          quit (also Ctrl-D)\n"
            "  !cmd           run a shell command (output shown to you)\n"
            "  !!cmd          run a shell command, add its output to the chat\n",
-           tools_on ? "on" : "off");
+           tools_on ? "on" : "off", web_on ? "on" : "off");
 }
 
 typedef struct {
@@ -339,6 +342,7 @@ typedef struct {
     chat_t *chat;
     long max_history;
     int tools_on;
+    int web;
 } repl_state;
 
 /* Processes a line starting with '/'. Returns 1 continue, 0 quit. */
@@ -358,7 +362,7 @@ static int handle_command(repl_state *st, char *line)
     if (strcmp(cmd, "/quit") == 0 || strcmp(cmd, "/exit") == 0)
         return 0;
     if (strcmp(cmd, "/help") == 0) {
-        repl_help(st->tools_on);
+        repl_help(st->tools_on, st->web);
     } else if (strcmp(cmd, "/new") == 0) {
         chat_clear(st->chat);
         printf("%snew conversation%s\n", C_DIM, C_RESET);
@@ -366,6 +370,10 @@ static int handle_command(repl_state *st, char *line)
         st->tools_on = !st->tools_on;
         printf("%stool use: %s%s\n", C_DIM,
                st->tools_on ? "on" : "off", C_RESET);
+    } else if (strcmp(cmd, "/web") == 0) {
+        st->web = !st->web;
+        printf("%sweb search: %s%s\n", C_DIM,
+               st->web ? "on" : "off", C_RESET);
     } else if (strcmp(cmd, "/model") == 0) {
         if (arg && *arg) {
             if (strlen(arg) < st->modelcap) {
@@ -493,10 +501,14 @@ static void run_repl(repl_state *st, history *h)
     if (term_is_tty())
         printf("%spiki %s — %s via %s%s%s — /help%s\n",
                C_DIM, PIKI_VERSION, st->model, st->pv->host,
-               st->tools_on ? " [tools]" : "", "", C_RESET);
+               st->tools_on ? " [tools]" : "",
+               st->web ? " [web]" : "", C_RESET);
 
     for (;;) {
-        int rc = term_readline(C_PROMPT, &line, h);
+        const char *prompt = st->web
+            ? (use_color ? "\033[1;36mweb> \033[0m" : "web> ")
+            : C_PROMPT;
+        int rc = term_readline(prompt, &line, h);
 
         if (rc == 0)
             break;               /* Ctrl-D */
@@ -528,7 +540,8 @@ static void run_repl(repl_state *st, history *h)
 
             buf_init(&final);
             rc = agent_turn(st->pv, st->model, st->chat,
-                            st->max_history, &final, err, sizeof err);
+                            st->max_history, st->web, &final,
+                            err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", final.data);
             } else if (rc == -2) {
@@ -544,7 +557,8 @@ static void run_repl(repl_state *st, history *h)
             print_ctx pc;
 
             rc = stream_turn(st->pv, st->model, st->chat,
-                             st->max_history, &pc, err, sizeof err);
+                             st->max_history, st->web, &pc,
+                             err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", pc.acc.data);
             } else if (rc == -2) {
@@ -592,6 +606,7 @@ int main(int argc, char **argv)
     struct sigaction sa;
     char err[512];
     int tools_on = 0;
+    int web = 0;
     int i, rc;
 
     for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
@@ -614,6 +629,8 @@ int main(int argc, char **argv)
             provider_name = argv[++i];
         } else if (strcmp(argv[i], "-t") == 0) {
             tools_on = 1;
+        } else if (strcmp(argv[i], "-w") == 0) {
+            web = 1;
         } else {
             usage();
             return 2;
@@ -700,13 +717,13 @@ int main(int argc, char **argv)
             buf_t final;
 
             buf_init(&final);
-            rc = agent_turn(&pv, model, &chat, cfg.max_history,
+            rc = agent_turn(&pv, model, &chat, cfg.max_history, web,
                             &final, err, sizeof err);
             buf_free(&final);
         } else {
             print_ctx pc;
 
-            rc = stream_turn(&pv, model, &chat, cfg.max_history,
+            rc = stream_turn(&pv, model, &chat, cfg.max_history, web,
                              &pc, err, sizeof err);
             buf_free(&pc.acc);
         }
@@ -738,6 +755,7 @@ int main(int argc, char **argv)
         st.chat = &chat;
         st.max_history = cfg.max_history;
         st.tools_on = tools_on;
+        st.web = web;
         run_repl(&st, &h);
 
         if (hpath[0])

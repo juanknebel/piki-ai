@@ -30,9 +30,10 @@ int api_chat(const provider_t *pv, const char *model,
  * continue; nonzero cuts the stream (api_chat_stream returns 0). */
 typedef int (*api_on_delta)(const char *text, void *user);
 
-/* Chat with SSE streaming. 0 ok, -1 error (err), -2 interrupted. */
+/* Chat with SSE streaming. web enables OpenRouter's web-search plugin.
+ * 0 ok, -1 error (err), -2 interrupted. */
 int api_chat_stream(const provider_t *pv, const char *model,
-                    const chat_msg *msgs, size_t nmsgs,
+                    const chat_msg *msgs, size_t nmsgs, int web,
                     api_on_delta on_delta, void *user,
                     char *err, size_t errlen);
 
@@ -60,10 +61,11 @@ void api_turn_init(api_turn *t);
 void api_turn_free(api_turn *t);
 
 /* One agent turn (non-streaming). messages_json is the complete JSON
- * array of messages; tools_json the array of tools (NULL to omit).
+ * array of messages; tools_json the array of tools (NULL to omit); web
+ * enables OpenRouter's web-search plugin.
  * 0 ok, -1 error (err), -2 interrupted. */
 int api_agent_turn(const provider_t *pv, const char *model,
                    const char *messages_json, const char *tools_json,
-                   api_turn *out, char *err, size_t errlen);
+                   int web, api_turn *out, char *err, size_t errlen);
 
 #endif /* PIKI_API_H */

@@ -9,8 +9,12 @@
 #include "net.h"
 #include "sse.h"
 
+/* OpenRouter web search plugin (equivalent to the ":online" model suffix). */
+#define WEB_PLUGIN ",\"plugins\":[{\"id\":\"web\"}]"
+
 static void build_body(buf_t *b, const char *model,
-                       const chat_msg *msgs, size_t nmsgs, int stream)
+                       const chat_msg *msgs, size_t nmsgs,
+                       int stream, int web)
 {
     size_t i;
 
@@ -27,7 +31,10 @@ static void build_body(buf_t *b, const char *model,
         json_escape(b, msgs[i].content);
         buf_putc(b, '}');
     }
-    buf_puts(b, "]}");
+    buf_puts(b, "]");
+    if (web)
+        buf_puts(b, WEB_PLUGIN);
+    buf_putc(b, '}');
 }
 
 static const char *status_hint(int status)
@@ -67,7 +74,7 @@ int api_chat(const provider_t *pv, const char *model,
     buf_init(&body);
     buf_init(&path);
     buf_init(&resp);
-    build_body(&body, model, msgs, nmsgs, 0);
+    build_body(&body, model, msgs, nmsgs, 0, 0);
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
     c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
@@ -257,7 +264,7 @@ static char *dup_or_empty(const char *s)
 
 int api_agent_turn(const provider_t *pv, const char *model,
                    const char *messages_json, const char *tools_json,
-                   api_turn *out, char *err, size_t errlen)
+                   int web, api_turn *out, char *err, size_t errlen)
 {
     buf_t body, path, resp;
     net_conn *c = NULL;
@@ -278,6 +285,8 @@ int api_agent_turn(const provider_t *pv, const char *model,
         buf_puts(&body, ",\"tools\":");
         buf_puts(&body, tools_json);
     }
+    if (web)
+        buf_puts(&body, WEB_PLUGIN);
     buf_putc(&body, '}');
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
@@ -406,7 +415,7 @@ static int on_event(const char *data, void *user)
 }
 
 int api_chat_stream(const provider_t *pv, const char *model,
-                    const chat_msg *msgs, size_t nmsgs,
+                    const chat_msg *msgs, size_t nmsgs, int web,
                     api_on_delta on_delta, void *user,
                     char *err, size_t errlen)
 {
@@ -427,7 +436,7 @@ int api_chat_stream(const provider_t *pv, const char *model,
     sc.err = err;
     sc.errlen = errlen;
 
-    build_body(&body, model, msgs, nmsgs, 1);
+    build_body(&body, model, msgs, nmsgs, 1, web);
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
     c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
