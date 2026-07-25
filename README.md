@@ -121,7 +121,14 @@ Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use),
 /new           start a new conversation
 /help          help
 /quit          exit (also Ctrl-D)
+!cmd           run a shell command (output shown to you)
+!!cmd          run a shell command and add its output to the chat
 ```
+
+`!cmd` is a local shell escape — handy to check something without leaving the
+REPL. `!!cmd` additionally feeds the command's output (stdout + stderr, with
+its exit code) into the conversation, so you can then ask the model about it
+(e.g. `!!make 2>&1` then "why does it fail?").
 
 Line editing: ←/→ arrows, Home/End, ↑/↓ for history,
 Ctrl-A/E/K/U/W. History persists in `~/.config/piki/history`.

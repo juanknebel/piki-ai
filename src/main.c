@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 
 #include "api.h"
 #include "buf.h"
@@ -325,7 +326,9 @@ static void repl_help(int tools_on)
            "  /load <file>   load a conversation\n"
            "  /new           start a new conversation\n"
            "  /help          this help\n"
-           "  /quit          quit (also Ctrl-D)\n",
+           "  /quit          quit (also Ctrl-D)\n"
+           "  !cmd           run a shell command (output shown to you)\n"
+           "  !!cmd          run a shell command, add its output to the chat\n",
            tools_on ? "on" : "off");
 }
 
@@ -412,6 +415,75 @@ static int handle_command(repl_state *st, char *line)
     return 1;
 }
 
+/* Runs cmd through the shell, streaming its output (stdout+stderr) live to
+ * the terminal. If capture is non-NULL, also appends the output there.
+ * Returns the command's exit code, or -1 if it could not be started. */
+static int run_shell(const char *cmd, buf_t *capture)
+{
+    buf_t full;
+    FILE *p;
+    char tmp[4096];
+    size_t n;
+    int status;
+
+    buf_init(&full);
+    buf_printf(&full, "%s 2>&1", cmd);   /* merge stderr so it is captured too */
+    p = popen(full.data, "r");
+    buf_free(&full);
+    if (!p) {
+        fprintf(stderr, "piki: could not run the command\n");
+        return -1;
+    }
+    while ((n = fread(tmp, 1, sizeof tmp, p)) > 0) {
+        fwrite(tmp, 1, n, stdout);
+        fflush(stdout);
+        if (capture)
+            buf_append(capture, tmp, n);
+    }
+    status = pclose(p);
+    if (status != -1 && WIFEXITED(status))
+        return WEXITSTATUS(status);
+    return status;
+}
+
+/* Handles a REPL line starting with '!'. '!cmd' runs and shows the output;
+ * '!!cmd' also appends it to the conversation as a user message. */
+static void handle_bang(repl_state *st, char *line)
+{
+    int to_context = 0;
+    char *cmd = line + 1;   /* skip the first '!' */
+    buf_t out;
+    int rc;
+
+    if (*cmd == '!') {      /* '!!' -> also into the chat context */
+        to_context = 1;
+        cmd++;
+    }
+    while (*cmd == ' ')
+        cmd++;
+    if (!*cmd) {
+        fputs("usage: !cmd (run) or !!cmd (run and add output to the chat)\n",
+              stderr);
+        return;
+    }
+
+    buf_init(&out);
+    rc = run_shell(cmd, to_context ? &out : NULL);
+
+    if (to_context) {
+        buf_t msg;
+
+        buf_init(&msg);
+        buf_printf(&msg, "$ %s\n%.*s\n[exit %d]",
+                   cmd, (int)out.len, out.data ? out.data : "", rc);
+        chat_add(st->chat, "user", msg.data);
+        printf("%s[output added to the chat]%s\n", C_DIM, C_RESET);
+        buf_free(&msg);
+    }
+    buf_free(&out);
+    net_interrupt = 0;   /* clear in case Ctrl-C hit the command */
+}
+
 static void run_repl(repl_state *st, history *h)
 {
     buf_t line;
@@ -434,6 +506,12 @@ static void run_repl(repl_state *st, history *h)
         }
         if (!line.len)
             continue;
+
+        if (line.data[0] == '!') {
+            hist_add(h, line.data);
+            handle_bang(st, line.data);
+            continue;
+        }
 
         if (line.data[0] == '/') {
             hist_add(h, line.data);
