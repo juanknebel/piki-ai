@@ -24,6 +24,8 @@
 #include "tools.h"
 
 #define PIKI_VERSION  "0.4.0"
+#define PIKI_AUTHOR   "Juan Knebel <juanknebel@gmail.com>"
+#define PIKI_REPO     "https://github.com/juanknebel/piki-ai"
 #define DEFAULT_MODEL "anthropic/claude-haiku-4.5"
 #define MAX_AGENT_STEPS 12
 #define HISTORY_MAX 1000
@@ -49,7 +51,8 @@ static void usage(void)
           "commands)\n"
           "     -t enables tool use (read/write files, run commands)\n"
           "config: ~/.config/piki/config\n"
-          "env: OPENROUTER_API_KEY, PIKI_BASE_URL\n", stderr);
+          "env: OPENROUTER_API_KEY, PIKI_BASE_URL\n"
+          "\n" PIKI_REPO "\n", stderr);
 }
 
 /* Parses http[s]://host[:port][/base] into pv. 0 ok, -1 invalid. */
@@ -515,7 +518,11 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
         if (strcmp(argv[i], "--version") == 0) {
-            printf("piki %s\n", PIKI_VERSION);
+            printf("piki %s\n"
+                   "Lightweight terminal LLM chat client.\n"
+                   "Author: %s\n"
+                   "%s\n",
+                   PIKI_VERSION, PIKI_AUTHOR, PIKI_REPO);
             return 0;
         } else if (strcmp(argv[i], "-h") == 0 ||
                    strcmp(argv[i], "--help") == 0) {
