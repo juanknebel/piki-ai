@@ -5,6 +5,8 @@
 #include <string.h>
 #include <strings.h>
 
+#include "version.h"
+
 #define HDR_MAX  (64 * 1024)
 #define BODY_MAX (8 * 1024 * 1024)
 
@@ -184,7 +186,7 @@ static int send_request(net_conn *c, const char *method, const char *host,
     buf_printf(&req,
                "%s %s HTTP/1.1\r\n"
                "Host: %s\r\n"
-               "User-Agent: piki/0.1\r\n"
+               "User-Agent: piki/" PIKI_VERSION "\r\n"
                "Accept: application/json\r\n",
                method, path, host);
     if (bearer)

@@ -85,6 +85,12 @@ the system musl-gcc lacks.
 `OBJS` and the `SRCS` variable in `tools/build-release.sh` (they are separate
 lists — a mismatch produces link errors only in the release build).
 
+## Version bumps
+
+`PIKI_VERSION` lives only in `src/version.h` — bump that one line. It feeds
+`--version`, the REPL banner, and the HTTP `User-Agent`. Tagging `vX.Y.Z` and
+pushing triggers a GitHub Release with the static binaries attached.
+
 ## Not built yet
 
 Native Haiku build and validation on real 2007 hardware — the code is

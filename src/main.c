@@ -22,8 +22,8 @@
 #include "net.h"
 #include "term.h"
 #include "tools.h"
+#include "version.h"
 
-#define PIKI_VERSION  "0.4.0"
 #define PIKI_AUTHOR   "Juan Knebel <juanknebel@gmail.com>"
 #define PIKI_REPO     "https://github.com/juanknebel/piki-ai"
 #define DEFAULT_MODEL "anthropic/claude-haiku-4.5"
