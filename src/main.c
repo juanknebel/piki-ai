@@ -492,6 +492,41 @@ static void handle_bang(repl_state *st, char *line)
     net_interrupt = 0;   /* clear in case Ctrl-C hit the command */
 }
 
+/* REPL commands offered by Tab completion. */
+static const char *const REPL_COMMANDS[] = {
+    "/model", "/models", "/tools", "/web", "/save", "/load",
+    "/new", "/help", "/quit", NULL
+};
+
+/* Tab completer: when the line is a bare command token (starts with '/' and
+ * has no space), returns the matching commands. */
+static void complete_command(const char *line, char ***out, size_t *n,
+                             void *user)
+{
+    size_t len = strlen(line), i, cap = 0;
+
+    (void)user;
+    *out = NULL;
+    *n = 0;
+    if (len == 0 || line[0] != '/' || strchr(line, ' '))
+        return;
+    for (i = 0; REPL_COMMANDS[i]; i++) {
+        if (strncmp(REPL_COMMANDS[i], line, len) != 0)
+            continue;
+        if (*n == cap) {
+            cap = cap ? cap * 2 : 8;
+            *out = realloc(*out, cap * sizeof **out);
+            if (!*out) {
+                *n = 0;
+                return;
+            }
+        }
+        (*out)[*n] = strdup(REPL_COMMANDS[i]);
+        if ((*out)[*n])
+            (*n)++;
+    }
+}
+
 static void run_repl(repl_state *st, history *h)
 {
     buf_t line;
@@ -508,7 +543,7 @@ static void run_repl(repl_state *st, history *h)
         const char *prompt = st->web
             ? (use_color ? "\033[1;36mweb> \033[0m" : "web> ")
             : C_PROMPT;
-        int rc = term_readline(prompt, &line, h);
+        int rc = term_readline(prompt, &line, h, complete_command, NULL);
 
         if (rc == 0)
             break;               /* Ctrl-D */

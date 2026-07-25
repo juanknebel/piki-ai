@@ -44,9 +44,18 @@ void hist_add(history *h, const char *line);   /* ignores empty and duplicate */
 int  hist_load(history *h, const char *path);
 int  hist_save(const history *h, const char *path, size_t max);
 
-/* Reads an interactive line with editing and history navigation.
- * out receives the line (without '\n'). Returns 1 line, 0 EOF (Ctrl-D on
- * empty), -1 interrupted (Ctrl-C). Requires a TTY. */
-int edit_readline(const char *prompt, buf_t *out, history *h);
+/* Tab-completion callback. Given the current line (whole buffer, cursor at
+ * end), allocate an array of candidate strings that fully replace it and
+ * store it in *out with count *n (each item and the array are malloc'd; the
+ * editor frees them). No match -> *n = 0. */
+typedef void (*el_completer)(const char *line, char ***out, size_t *n,
+                             void *user);
+
+/* Reads an interactive line with editing, history navigation and Tab
+ * completion (comp may be NULL). out receives the line (without '\n').
+ * Returns 1 line, 0 EOF (Ctrl-D on empty), -1 interrupted (Ctrl-C).
+ * Requires a TTY. */
+int edit_readline(const char *prompt, buf_t *out, history *h,
+                  el_completer comp, void *cuser);
 
 #endif /* PIKI_EDIT_H */

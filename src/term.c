@@ -39,10 +39,11 @@ static int readline_fgets(const char *prompt, buf_t *out, int tty)
     }
 }
 
-int term_readline(const char *prompt, buf_t *out, history *h)
+int term_readline(const char *prompt, buf_t *out, history *h,
+                  el_completer comp, void *cuser)
 {
     if (term_is_tty()) {
-        int rc = edit_readline(prompt, out, h);
+        int rc = edit_readline(prompt, out, h, comp, cuser);
 
         if (rc != -2)
             return rc;

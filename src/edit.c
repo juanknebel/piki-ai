@@ -247,7 +247,57 @@ static void redraw(const char *prompt, editline *e)
     buf_free(&o);
 }
 
-int edit_readline(const char *prompt, buf_t *out, history *h)
+/* On Tab: complete the whole line against comp's candidates. Single match
+ * completes and adds a space; several complete the common prefix and are
+ * listed below. Only acts with the cursor at the end of the line. */
+static void do_complete(const char *prompt, editline *e,
+                        el_completer comp, void *cuser)
+{
+    char **cands = NULL;
+    size_t nc = 0, k;
+
+    if (!comp || e->pos != e->buf.len)
+        return;
+    comp(e->buf.data ? e->buf.data : "", &cands, &nc, cuser);
+    if (nc == 1) {
+        el_set(e, cands[0]);
+        el_insert(e, " ", 1);
+        redraw(prompt, e);
+    } else if (nc > 1) {
+        size_t lcp = strlen(cands[0]);
+
+        for (k = 1; k < nc; k++) {
+            size_t j = 0;
+
+            while (j < lcp && cands[k][j] == cands[0][j])
+                j++;
+            lcp = j;
+        }
+        (void)write(STDOUT_FILENO, "\r\n", 2);
+        for (k = 0; k < nc; k++) {
+            (void)write(STDOUT_FILENO, cands[k], strlen(cands[k]));
+            (void)write(STDOUT_FILENO, "  ", 2);
+        }
+        (void)write(STDOUT_FILENO, "\r\n", 2);
+        if (lcp > e->buf.len) {
+            char *tmp = malloc(lcp + 1);
+
+            if (tmp) {
+                memcpy(tmp, cands[0], lcp);
+                tmp[lcp] = '\0';
+                el_set(e, tmp);
+                free(tmp);
+            }
+        }
+        redraw(prompt, e);
+    }
+    for (k = 0; k < nc; k++)
+        free(cands[k]);
+    free(cands);
+}
+
+int edit_readline(const char *prompt, buf_t *out, history *h,
+                  el_completer comp, void *cuser)
 {
     struct termios orig, raw;
     editline e;
@@ -314,6 +364,8 @@ int edit_readline(const char *prompt, buf_t *out, history *h)
         } else if (c == 23) {         /* Ctrl-W */
             el_kill_prev_word(&e);
             redraw(prompt, &e);
+        } else if (c == 9) {          /* Tab: completion */
+            do_complete(prompt, &e, comp, cuser);
         } else if (c == 27) {         /* escape sequence */
             unsigned char seq[2];
 
