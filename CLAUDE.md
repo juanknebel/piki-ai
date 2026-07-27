@@ -126,8 +126,9 @@ lists — a mismatch produces link errors only in the release build).
 `--version`, the REPL banner, and the HTTP `User-Agent`. Tagging `vX.Y.Z` and
 pushing triggers a GitHub Release with the static binaries attached.
 
-## Not built yet
+## Platform status
 
-Native Haiku build and validation on real 2007 hardware — the code is
-prepared for both (Makefile adds `-lnetwork` on Haiku) but neither has been
-compiled/run on those platforms; they need the actual machine/VM.
+Validated on real old 32-bit (i686) hardware — an Acer Aspire One netbook
+with 1 GB RAM runs the static i686 release binary. Still pending: the native Haiku build (the code is
+prepared, Makefile adds `-lnetwork` on Haiku, but it has never been
+compiled/run there; needs the actual machine/VM).

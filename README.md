@@ -2,7 +2,8 @@
 
 A chat client for LLM models for the terminal, **ultra-lightweight and with
 no runtime dependencies**. Designed to run anywhere, including old 32-bit
-laptops (Linux i686) and Haiku OS.
+laptops (Linux i686) and Haiku OS. Verified on real hardware: an Acer
+Aspire One 32-bit netbook with 1 GB of RAM.
 
 Talks to any OpenAI-compatible API endpoint: OpenRouter (by default) and
 local servers like **Ollama** or **llama.cpp** (`llama-server`).
