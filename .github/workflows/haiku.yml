@@ -1,11 +1,11 @@
 name: Haiku
 
-# Native Haiku build inside a QEMU VM (cross-platform-actions). Separate from
-# the release CI on purpose: this validates the Haiku port on every push to
-# main (and on demand) without gating tag releases on it.
+# Native Haiku build inside a QEMU VM (cross-platform-actions). Runs on the
+# same version tags as the release CI (plus on demand), but as a separate
+# workflow so it never gates the release itself.
 on:
   push:
-    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   workflow_dispatch:
 
 concurrency:
