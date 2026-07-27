@@ -86,8 +86,17 @@ url = http://192.168.1.10:11434/v1    ; no key: plain HTTP, no auth
 provider = openrouter
 model = anthropic/claude-haiku-4.5
 system = Answer in English.
-max_history = 40
+max_history = 40           ; messages sent per turn
+max_memory = 256           ; KB of history kept in RAM
+max_context_tokens = 8000  ; rough cap on what is sent per turn
 ```
+
+`max_memory` and `max_context_tokens` are two different limits.
+`max_memory` caps what is **kept in RAM**: once past it the oldest messages
+are dropped and freed, so a long session cannot grow without bound (on a
+1 GB machine that is the difference between working and swapping).
+`max_context_tokens` caps what is **sent** each turn, which bounds cost and
+upload time; there is no tokenizer, so it is estimated at ~4 bytes per token.
 
 Environment variables (override the config):
 

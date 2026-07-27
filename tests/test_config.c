@@ -47,7 +47,9 @@ int main(void)
         "provider = ollama\n"
         "model = llama3.2\n"
         "system = Responde en castellano rioplatense.\n"
-        "max_history = 20\n", err, sizeof err) == 0);
+        "max_history = 20\n"
+        "max_memory = 512\n"
+        "max_context_tokens = 4000\n", err, sizeof err) == 0);
     CHECK(c.nproviders == 2);
     CHECK(config_provider(&c, "openrouter") != NULL);
     CHECK(strcmp(config_provider(&c, "openrouter")->key,
@@ -60,11 +62,14 @@ int main(void)
     CHECK(strcmp(c.model, "llama3.2") == 0);
     CHECK(strcmp(c.system, "Responde en castellano rioplatense.") == 0);
     CHECK(c.max_history == 20);
+    CHECK(c.max_memory == 512);
+    CHECK(c.max_context_tokens == 4000);
 
     /* empty: defaults remain */
     config_defaults(&c);
     CHECK(config_parse(&c, "", err, sizeof err) == 0);
     CHECK(c.nproviders == 0 && c.max_history == 40 && !c.model[0]);
+    CHECK(c.max_memory == 256 && c.max_context_tokens == 8000);
 
     /* unknown keys and sections are ignored */
     config_defaults(&c);
@@ -92,6 +97,9 @@ int main(void)
     expect_fail("[defaults]\nsin igual\n");
     expect_fail("[defaults]\nmax_history = cero\n");
     expect_fail("[defaults]\nmax_history = 0\n");
+    expect_fail("[defaults]\nmax_memory = 0\n");
+    expect_fail("[defaults]\nmax_memory = -5\n");
+    expect_fail("[defaults]\nmax_context_tokens = abc\n");
     expect_fail("[provider \"nombre-absurdamente-largo-que-no-entra-"
                 "en-el-campo\"]\n");
 

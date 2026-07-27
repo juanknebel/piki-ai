@@ -43,6 +43,33 @@ void chat_set_system(chat_t *c, const char *s)
     c->system = s ? xstrdup(s) : NULL;
 }
 
+/* Drops the oldest message, freeing it. */
+static void evict_oldest(chat_t *c)
+{
+    size_t len;
+
+    if (!c->n)
+        return;
+    len = strlen(c->msgs[0].content);
+    free((char *)c->msgs[0].content);
+    c->bytes -= len;
+    c->n--;
+    memmove(c->msgs, c->msgs + 1, c->n * sizeof *c->msgs);
+}
+
+/* Evicts from the front until under the cap, always keeping the newest. */
+static void enforce_cap(chat_t *c)
+{
+    while (c->max_bytes && c->bytes > c->max_bytes && c->n > 1)
+        evict_oldest(c);
+}
+
+void chat_set_max_bytes(chat_t *c, size_t max_bytes)
+{
+    c->max_bytes = max_bytes;
+    enforce_cap(c);
+}
+
 void chat_add(chat_t *c, const char *role, const char *content)
 {
     if (c->n == c->cap) {
@@ -56,13 +83,16 @@ void chat_add(chat_t *c, const char *role, const char *content)
     }
     c->msgs[c->n].role = role;
     c->msgs[c->n].content = xstrdup(content);
+    c->bytes += strlen(content);
     c->n++;
+    enforce_cap(c);
 }
 
 void chat_pop(chat_t *c)
 {
     if (c->n) {
         c->n--;
+        c->bytes -= strlen(c->msgs[c->n].content);
         free((char *)c->msgs[c->n].content);
     }
 }
@@ -73,20 +103,37 @@ void chat_clear(chat_t *c)
         chat_pop(c);
 }
 
-size_t chat_window(const chat_t *c, size_t max_msgs,
+size_t chat_window(const chat_t *c, size_t max_msgs, size_t max_bytes,
                    chat_msg *out, size_t outcap)
 {
-    size_t k = c->n, w = 0, start, i;
+    size_t k = c->n, w = 0, start, i, used = 0;
 
     if (k > max_msgs)
         k = max_msgs;
     if (c->system && w < outcap) {
         out[w].role = "system";
         out[w].content = c->system;
+        used += strlen(c->system);
         w++;
     }
     if (k > outcap - w)
         k = outcap - w;
+
+    if (max_bytes) {
+        size_t fit = 0;
+
+        /* walk newest-first, keeping what fits; the newest always goes */
+        for (i = 0; i < k; i++) {
+            size_t len = strlen(c->msgs[c->n - 1 - i].content);
+
+            if (fit && used + len > max_bytes)
+                break;
+            used += len;
+            fit++;
+        }
+        k = fit;
+    }
+
     start = c->n - k;
     for (i = 0; i < k; i++)
         out[w++] = c->msgs[start + i];

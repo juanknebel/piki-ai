@@ -29,7 +29,9 @@ struct net_conn {
 
 enum {
     CONNECT_TIMEOUT_MS = 15000,
-    POLL_TICK_MS = 200
+    POLL_TICK_MS = 200,
+    CONNECT_ATTEMPTS = 3,      /* the target machines have flaky wifi */
+    RETRY_BASE_MS = 1000       /* backoff: 1 s, then 2 s */
 };
 
 static void seterr(char *err, size_t errlen, const char *fmt, ...)
@@ -85,6 +87,21 @@ static int wait_fd(int fd, short events, int timeout_ms)
             return 0;
         waited += POLL_TICK_MS;
     }
+}
+
+/* Sleeps ms in short ticks so a Ctrl-C is noticed right away.
+ * Returns -1 if interrupted. */
+static int sleep_interruptible(int ms)
+{
+    int waited = 0;
+
+    while (waited < ms) {
+        if (net_interrupt)
+            return -1;
+        poll(NULL, 0, POLL_TICK_MS);
+        waited += POLL_TICK_MS;
+    }
+    return net_interrupt ? -1 : 0;
 }
 
 static int tcp_connect(const char *host, int port, char *err, size_t errlen)
@@ -175,7 +192,21 @@ net_conn *net_connect(const char *host, int port, int use_tls,
         return NULL;
     }
     c->read_timeout_ms = -1;
-    c->fd = tcp_connect(host, port, err, errlen);
+
+    /* Retry the connect only: nothing has been sent yet, so a retry cannot
+     * duplicate a request or a charge. TLS/certificate failures below are
+     * never retried -- they are not transient and retrying hides them. */
+    {
+        int attempt;
+
+        for (attempt = 0; ; attempt++) {
+            c->fd = tcp_connect(host, port, err, errlen);
+            if (c->fd >= 0 || attempt >= CONNECT_ATTEMPTS - 1)
+                break;
+            if (sleep_interruptible(RETRY_BASE_MS << attempt) < 0)
+                break;
+        }
+    }
     if (c->fd < 0) {
         free(c);
         return NULL;

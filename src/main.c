@@ -136,8 +136,14 @@ static int print_delta(const char *text, void *user)
     return 0;
 }
 
+/* Limits on what is SENT per turn (distinct from chat_t's RAM cap). */
+typedef struct {
+    size_t max_msgs;
+    size_t max_bytes;   /* 0 = no limit */
+} send_limits;
+
 static int stream_turn(const provider_t *pv, const char *model,
-                       const chat_t *chat, long max_history, int web,
+                       const chat_t *chat, send_limits lim, int web,
                        token_usage *usage, print_ctx *pc,
                        char *err, size_t errlen)
 {
@@ -150,7 +156,7 @@ static int stream_turn(const provider_t *pv, const char *model,
         snprintf(err, errlen, "out of memory");
         return -1;
     }
-    wn = chat_window(chat, (size_t)max_history, win, chat->n + 1);
+    wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
     memset(pc, 0, sizeof *pc);
     buf_init(&pc->acc);
     rc = api_chat_stream(pv, model, win, wn, web, usage, print_delta, pc,
@@ -196,7 +202,7 @@ static int confirm(const char *what)
  * Returns 0 ok, -1 error (err), -2 interrupted. Leaves the final response
  * in final (for the history). */
 static int agent_turn(const provider_t *pv, const char *model,
-                      const chat_t *chat, long max_history, int web,
+                      const chat_t *chat, send_limits lim, int web,
                       token_usage *usage, buf_t *final,
                       char *err, size_t errlen)
 {
@@ -220,7 +226,7 @@ static int agent_turn(const provider_t *pv, const char *model,
         buf_free(&msgs);
         return -1;
     }
-    wn = chat_window(chat, (size_t)max_history, win, chat->n + 1);
+    wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
     for (i = 0; i < wn; i++) {
         append_msg_json(&msgs, first, win[i].role, win[i].content);
         first = 0;
@@ -356,7 +362,7 @@ typedef struct {
     char *model;
     size_t modelcap;
     chat_t *chat;
-    long max_history;
+    send_limits lim;
     int tools_on;
     int web;
     long sent_total;   /* prompt tokens accumulated this session */
@@ -622,7 +628,7 @@ static void run_repl(repl_state *st, history *h)
 
             buf_init(&final);
             rc = agent_turn(st->pv, st->model, st->chat,
-                            st->max_history, st->web, &tu, &final,
+                            st->lim, st->web, &tu, &final,
                             err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", final.data);
@@ -639,7 +645,7 @@ static void run_repl(repl_state *st, history *h)
             print_ctx pc;
 
             rc = stream_turn(st->pv, st->model, st->chat,
-                             st->max_history, st->web, &tu, &pc,
+                             st->lim, st->web, &tu, &pc,
                              err, sizeof err);
             if (rc == 0) {
                 chat_add(st->chat, "assistant", pc.acc.data);
@@ -687,6 +693,7 @@ int main(int argc, char **argv)
     config_t cfg;
     provider_t pv;
     chat_t chat;
+    send_limits lim;
     struct sigaction sa;
     char err[512];
     int tools_on = 0;
@@ -790,6 +797,12 @@ int main(int argc, char **argv)
     sigaction(SIGINT, &sa, NULL);
 
     chat_init(&chat);
+    /* cap what we KEEP in RAM (matters on 1 GB machines) */
+    chat_set_max_bytes(&chat, (size_t)cfg.max_memory * 1024);
+    /* cap what we SEND: no tokenizer, so estimate ~4 bytes per token */
+    lim.max_msgs = (size_t)cfg.max_history;
+    lim.max_bytes = (size_t)cfg.max_context_tokens * 4;
+
     if (system_prompt)
         chat_set_system(&chat, system_prompt);
     else if (cfg.system[0])
@@ -801,13 +814,13 @@ int main(int argc, char **argv)
             buf_t final;
 
             buf_init(&final);
-            rc = agent_turn(&pv, model, &chat, cfg.max_history, web,
+            rc = agent_turn(&pv, model, &chat, lim, web,
                             NULL, &final, err, sizeof err);
             buf_free(&final);
         } else {
             print_ctx pc;
 
-            rc = stream_turn(&pv, model, &chat, cfg.max_history, web,
+            rc = stream_turn(&pv, model, &chat, lim, web,
                              NULL, &pc, err, sizeof err);
             buf_free(&pc.acc);
         }
@@ -837,7 +850,7 @@ int main(int argc, char **argv)
         st.model = model;
         st.modelcap = sizeof model;
         st.chat = &chat;
-        st.max_history = cfg.max_history;
+        st.lim = lim;
         st.tools_on = tools_on;
         st.web = web;
         st.sent_total = 0;

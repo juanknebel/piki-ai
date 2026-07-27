@@ -12,6 +12,8 @@ void config_defaults(config_t *c)
 {
     memset(c, 0, sizeof *c);
     c->max_history = 40;
+    c->max_memory = 256;          /* KB */
+    c->max_context_tokens = 8000;
 }
 
 static char *trim(char *s)
@@ -31,6 +33,18 @@ static int copystr(char *dst, size_t cap, const char *src)
     if (strlen(src) >= cap)
         return -1;
     strcpy(dst, src);
+    return 0;
+}
+
+/* Parses a strictly positive integer. 0 ok, -1 invalid. */
+static int parse_positive(const char *val, long *out)
+{
+    char *end;
+    long v = strtol(val, &end, 10);
+
+    if (end == val || *end || v < 1)
+        return -1;
+    *out = v;
     return 0;
 }
 
@@ -131,15 +145,21 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
             else if (strcmp(key, "system") == 0)
                 bad = copystr(c->system, sizeof c->system, val);
             else if (strcmp(key, "max_history") == 0) {
-                char *end;
-                long v = strtol(val, &end, 10);
-
-                if (end == val || *end || v < 1) {
-                    seterr(err, errlen, "invalid max_history",
+                if (parse_positive(val, &c->max_history) < 0) {
+                    seterr(err, errlen, "invalid max_history", lineno);
+                    return -1;
+                }
+            } else if (strcmp(key, "max_memory") == 0) {
+                if (parse_positive(val, &c->max_memory) < 0) {
+                    seterr(err, errlen, "invalid max_memory", lineno);
+                    return -1;
+                }
+            } else if (strcmp(key, "max_context_tokens") == 0) {
+                if (parse_positive(val, &c->max_context_tokens) < 0) {
+                    seterr(err, errlen, "invalid max_context_tokens",
                            lineno);
                     return -1;
                 }
-                c->max_history = v;
             }
             /* unknown key: ignore */
             if (bad) {

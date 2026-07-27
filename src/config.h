@@ -16,7 +16,9 @@
  *   provider = openrouter
  *   model = anthropic/claude-haiku-4.5
  *   system = Respond in English.
- *   max_history = 40
+ *   max_history = 40           # messages sent per turn
+ *   max_memory = 256           # KB of history kept in RAM
+ *   max_context_tokens = 8000  # rough cap on what is sent per turn
  *
  * Lines starting with # or ; are comments. Unknown keys and sections
  * are ignored (forward compatibility). */
@@ -35,7 +37,9 @@ typedef struct {
     char default_provider[32];
     char model[128];
     char system[1024];
-    long max_history;
+    long max_history;         /* messages kept in the sent window */
+    long max_memory;          /* KB of history kept in RAM */
+    long max_context_tokens;  /* rough cap on what is sent per turn */
 } config_t;
 
 void config_defaults(config_t *c);
