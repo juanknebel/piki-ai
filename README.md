@@ -183,6 +183,8 @@ the flag.
 !!cmd          run a shell command and add its output to the chat
 ```
 
+![/help in the REPL](screenshots/02-help.png)
+
 `!cmd` is a local shell escape — handy to check something without leaving the
 REPL. `!!cmd` additionally feeds the command's output (stdout + stderr, with
 its exit code) into the conversation, so you can then ask the model about it
