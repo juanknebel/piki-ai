@@ -162,9 +162,16 @@ Line editing: ←/→ arrows, Home/End, ↑/↓ for history, Tab to complete
 commands, Ctrl-A/E/K/U/W. History persists in `~/.config/piki/history`.
 
 Above each prompt a status line shows the current directory, the active
-model, and the session token totals (`up` = prompt/sent, `dn` =
-completion/received), e.g. `~/git/piki-ai | anthropic/claude-haiku-4.5 |
-up 1234 dn 567`. Token counts come from the provider's usage accounting
+model, which modes are on, and the session token totals (`up` = prompt/sent,
+`dn` = completion/received):
+
+```
+~/git/piki-ai | anthropic/claude-haiku-4.5 [tools] [web] | up 1234 dn 567
+```
+
+`[tools]` and `[web]` appear only while those modes are enabled, so you can
+always tell at a glance whether the model is allowed to touch your files or
+search the web. Token counts come from the provider's usage accounting
 (OpenRouter reports them; some local servers may not).
 
 ### Tool use

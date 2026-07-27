@@ -592,8 +592,9 @@ static void print_status(const repl_state *st)
             dir = abbrev;
         }
     }
-    printf("%s%s | %s%s | up %ld dn %ld%s\n",
-           C_DIM, dir, st->model, st->web ? " [web]" : "",
+    printf("%s%s | %s%s%s | up %ld dn %ld%s\n",
+           C_DIM, dir, st->model,
+           st->tools_on ? " [tools]" : "", st->web ? " [web]" : "",
            st->sent_total, st->recv_total, C_RESET);
 }
 
