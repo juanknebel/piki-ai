@@ -1,0 +1,32 @@
+name: Haiku
+
+# Native Haiku build inside a QEMU VM (cross-platform-actions). Separate from
+# the release CI on purpose: this validates the Haiku port on every push to
+# main (and on demand) without gating tag releases on it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build on Haiku r1beta5 (x86-64)
+        uses: cross-platform-actions/action@v0.29.0
+        with:
+          operating_system: haiku
+          architecture: x86-64
+          version: 'r1beta5'
+          run: |
+            uname -a
+            pkgman install -y openssl3_devel
+            make
+            ./build/piki --version
