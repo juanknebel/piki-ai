@@ -2,12 +2,36 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 int term_is_tty(void)
 {
     return isatty(0) && isatty(1);
+}
+
+int term_width(void)
+{
+    const char *cols;
+
+#ifdef TIOCGWINSZ
+    {
+        struct winsize ws;
+
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+            return ws.ws_col;
+    }
+#endif
+    cols = getenv("COLUMNS");
+    if (cols && *cols) {
+        int n = atoi(cols);
+
+        if (n > 0)
+            return n;
+    }
+    return 80;
 }
 
 static int readline_fgets(const char *prompt, buf_t *out, int tty)

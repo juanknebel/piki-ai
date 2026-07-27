@@ -162,17 +162,24 @@ Line editing: ←/→ arrows, Home/End, ↑/↓ for history, Tab to complete
 commands, Ctrl-A/E/K/U/W. History persists in `~/.config/piki/history`.
 
 Above each prompt a status line shows the current directory, the active
-model, which modes are on, and the session token totals (`up` = prompt/sent,
-`dn` = completion/received):
+model, which modes are on, how full the context is, and the session token
+totals (`up` = prompt/sent, `dn` = completion/received):
 
 ```
-~/git/piki-ai | anthropic/claude-haiku-4.5 [tools] [web] | up 1234 dn 567
+~/git/piki-ai | claude-haiku-4.5 [tools] [web] | ctx 1208/8000 | up 1234 dn 567
 ```
 
 `[tools]` and `[web]` appear only while those modes are enabled, so you can
 always tell at a glance whether the model is allowed to touch your files or
-search the web. Token counts come from the provider's usage accounting
-(OpenRouter reports them; some local servers may not).
+search the web. `ctx` is the estimated size of the conversation against
+`max_context_tokens`, so you can see truncation coming and start a `/new`
+before older messages get dropped.
+
+The line always fits on one row: on a narrow terminal it drops the model's
+vendor prefix, then shortens the path, then hides the context gauge, rather
+than wrapping and eating a second row of an 80x25 console. Token counts come
+from the provider's usage accounting (OpenRouter reports them; some local
+servers may not).
 
 ### Tool use
 

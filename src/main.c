@@ -573,29 +573,104 @@ static void complete_command(const char *line, char ***out, size_t *n,
     }
 }
 
-/* Status line printed above each prompt: cwd, model, and session tokens. */
+/* Compact count: exact below 10k, then 12.3k / 1.2M. Integer math only. */
+static void fmt_count(char *out, size_t cap, long v)
+{
+    if (v < 10000)
+        snprintf(out, cap, "%ld", v);
+    else if (v < 1000000)
+        snprintf(out, cap, "%ld.%ldk", v / 1000, (v % 1000) / 100);
+    else
+        snprintf(out, cap, "%ld.%ldM", v / 1000000, (v % 1000000) / 100000);
+}
+
+/* Last `keep` components of path, prefixed with "..."; falls back to the
+ * original when that would not actually be shorter. */
+static const char *tail_path(const char *path, int keep,
+                             char *buf, size_t cap)
+{
+    const char *p = path + strlen(path);
+    int seen = 0;
+
+    while (p > path) {
+        p--;
+        if (*p == '/' && ++seen == keep) {
+            snprintf(buf, cap, "...%s", p);
+            return strlen(buf) < strlen(path) ? buf : path;
+        }
+    }
+    return path;
+}
+
+/* Status line above each prompt: cwd, model, active modes, context use and
+ * session tokens. Degrades (model vendor, then path depth) until it fits in
+ * one terminal line -- wrapping would eat two rows of an 80x25 console. */
 static void print_status(const repl_state *st)
 {
-    char cwd[1024];
+    char cwd[1024], rel[1040], p2[1040], p1[1040];
+    char up[24], dn[24], ctx[64];
     const char *home = getenv("HOME");
-    const char *dir = cwd;
-    char abbrev[1040];
+    const char *dir, *dirs[3], *models[2];
+    buf_t line;
+    int width = term_width();
+    size_t i, j, k;
 
     if (!getcwd(cwd, sizeof cwd))
-        dir = "?";
-    else if (home && *home) {
+        snprintf(cwd, sizeof cwd, "?");
+    dir = cwd;
+    if (home && *home) {
         size_t hl = strlen(home);
 
         if (strncmp(cwd, home, hl) == 0 &&
             (cwd[hl] == '/' || cwd[hl] == '\0')) {
-            snprintf(abbrev, sizeof abbrev, "~%s", cwd + hl);
-            dir = abbrev;
+            snprintf(rel, sizeof rel, "~%s", cwd + hl);
+            dir = rel;
         }
     }
-    printf("%s%s | %s%s%s | up %ld dn %ld%s\n",
-           C_DIM, dir, st->model,
-           st->tools_on ? " [tools]" : "", st->web ? " [web]" : "",
-           st->sent_total, st->recv_total, C_RESET);
+    dirs[0] = dir;
+    dirs[1] = tail_path(dir, 2, p2, sizeof p2);
+    dirs[2] = tail_path(dir, 1, p1, sizeof p1);
+
+    models[0] = st->model;
+    models[1] = strchr(st->model, '/') ? strchr(st->model, '/') + 1
+                                       : st->model;
+
+    fmt_count(up, sizeof up, st->sent_total);
+    fmt_count(dn, sizeof dn, st->recv_total);
+
+    /* how full the context is, so truncation never comes as a surprise */
+    ctx[0] = '\0';
+    if (st->lim.max_bytes) {
+        char used[24], budget[24];
+
+        fmt_count(used, sizeof used, (long)(st->chat->bytes / 4));
+        fmt_count(budget, sizeof budget, (long)(st->lim.max_bytes / 4));
+        snprintf(ctx, sizeof ctx, " | ctx %s/%s", used, budget);
+    }
+
+    /* Degrade in order of what we can most afford to lose: path depth,
+     * then the model vendor, and only then the context gauge. */
+    buf_init(&line);
+    for (k = 0; k < 2; k++) {
+        for (i = 0; i < 2; i++) {
+            for (j = 0; j < 3; j++) {
+                buf_reset(&line);
+                buf_printf(&line, "%s | %s%s%s%s | up %s dn %s",
+                           dirs[j], models[i],
+                           st->tools_on ? " [tools]" : "",
+                           st->web ? " [web]" : "",
+                           k ? "" : ctx, up, dn);
+                if ((int)line.len <= width)
+                    goto fits;
+            }
+        }
+    }
+fits:
+    /* last resort: hard-truncate rather than wrap */
+    printf("%s%.*s%s\n", C_DIM,
+           line.len <= (size_t)width ? (int)line.len : width,
+           line.data, C_RESET);
+    buf_free(&line);
 }
 
 static void run_repl(repl_state *st, history *h)
