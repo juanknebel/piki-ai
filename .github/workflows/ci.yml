@@ -59,10 +59,56 @@ jobs:
           name: piki-linux-binaries
           path: dist/piki-linux-*
 
+  # Native Haiku build inside a QEMU VM. The binary links dynamically against
+  # Haiku's own libs (libssl from the openssl3 package, libnetwork), so the
+  # target system needs `pkgman install openssl3` — no static musl trick here.
+  haiku-binary:
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build on Haiku r1beta5 (x86-64)
+        uses: cross-platform-actions/action@v0.29.0
+        with:
+          operating_system: haiku
+          architecture: x86-64
+          version: 'r1beta5'
+          run: |
+            uname -a
+            pkgman install -y openssl3_devel
+            make
+            strip build/piki
+            ./build/piki --version
+
+      - name: Collect binary
+        run: |
+          mkdir -p dist
+          cp build/piki dist/piki-haiku-x86_64
+          file dist/piki-haiku-x86_64 | grep -q 'ELF 64-bit'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: piki-haiku-binary
+          path: dist/piki-haiku-*
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [static-binaries, haiku-binary]
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create release with binaries
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            dist/piki-linux-x86_64 dist/piki-linux-i686 \
+            dist/piki-linux-x86_64 dist/piki-linux-i686 dist/piki-haiku-x86_64 \
             --title "$GITHUB_REF_NAME" --generate-notes
