@@ -51,6 +51,13 @@ int api_chat_stream(const provider_t *pv, const char *model,
 int api_models(const provider_t *pv, buf_t *out,
                char *err, size_t errlen);
 
+/* Fetches the latest release tag of owner_repo ("user/repo") from the
+ * GitHub API into out, without the leading 'v' (e.g. "0.7.0"). Used by
+ * the background update check; the caller decides what (if anything) to
+ * show. 0 ok, -1 error (err), -2 interrupted. */
+int api_latest_version(const char *owner_repo, char *out, size_t cap,
+                       char *err, size_t errlen);
+
 /* --- tool use / agent ------------------------------------------------- */
 
 typedef struct {

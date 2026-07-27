@@ -90,6 +90,7 @@ system = Answer in English.
 max_history = 40           ; messages sent per turn
 max_memory = 256           ; KB of history kept in RAM
 max_context_tokens = 8000  ; rough cap on what is sent per turn
+check_updates = 1          ; 0 disables the daily release check
 ```
 
 `max_memory` and `max_context_tokens` are two different limits.
@@ -134,6 +135,15 @@ chat you are leaving and opens (or creates) the chat `errands`, `/chats`
 lists them (`*` marks the active one), `/rename` names the current one and
 `/delete` removes one. Named chats live in `~/.config/piki/chats/`, one JSON
 file each, and autosave after every turn just like the session.
+
+### Update check
+
+On startup the REPL mentions, in one dim line, when a newer release exists
+on GitHub. The check never slows anything down: a detached background
+process asks the GitHub API at most once a day and caches the answer in
+`~/.config/piki/latest-release`; the notice comes from that cache. With no
+internet connection nothing is shown and nothing waits. Disable it with
+`check_updates = 0` in the `[defaults]` section of the config.
 
 ### Web search
 

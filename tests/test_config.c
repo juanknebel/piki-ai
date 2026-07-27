@@ -70,6 +70,14 @@ int main(void)
     CHECK(config_parse(&c, "", err, sizeof err) == 0);
     CHECK(c.nproviders == 0 && c.max_history == 40 && !c.model[0]);
     CHECK(c.max_memory == 256 && c.max_context_tokens == 8000);
+    CHECK(c.check_updates == 1);
+
+    /* check_updates: only 0 or 1 */
+    config_defaults(&c);
+    CHECK(config_parse(&c, "[defaults]\ncheck_updates = 0\n",
+                       err, sizeof err) == 0);
+    CHECK(c.check_updates == 0);
+    expect_fail("[defaults]\ncheck_updates = yes\n");
 
     /* unknown keys and sections are ignored */
     config_defaults(&c);

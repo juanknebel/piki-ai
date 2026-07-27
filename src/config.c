@@ -14,6 +14,7 @@ void config_defaults(config_t *c)
     c->max_history = 40;
     c->max_memory = 256;          /* KB */
     c->max_context_tokens = 8000;
+    c->check_updates = 1;
 }
 
 static char *trim(char *s)
@@ -158,6 +159,15 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
                 if (parse_positive(val, &c->max_context_tokens) < 0) {
                     seterr(err, errlen, "invalid max_context_tokens",
                            lineno);
+                    return -1;
+                }
+            } else if (strcmp(key, "check_updates") == 0) {
+                if (strcmp(val, "0") == 0) {
+                    c->check_updates = 0;
+                } else if (strcmp(val, "1") == 0) {
+                    c->check_updates = 1;
+                } else {
+                    seterr(err, errlen, "invalid check_updates", lineno);
                     return -1;
                 }
             }

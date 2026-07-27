@@ -235,6 +235,79 @@ done:
     return ret;
 }
 
+int api_latest_version(const char *owner_repo, char *out, size_t cap,
+                       char *err, size_t errlen)
+{
+    buf_t path, resp;
+    net_conn *c = NULL;
+    json_doc *doc = NULL;
+    http_resp r;
+    int rc, ret = -1;
+
+    buf_init(&path);
+    buf_init(&resp);
+    buf_printf(&path, "/repos/%s/releases/latest", owner_repo);
+
+    c = net_connect("api.github.com", 443, 1, err, errlen);
+    if (!c)
+        goto done;
+
+    rc = http_get(c, "api.github.com", path.data, NULL);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0) {
+        snprintf(err, errlen, "network error sending the request");
+        goto done;
+    }
+    rc = http_read_response(c, &r, err, errlen);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0)
+        goto done;
+    rc = http_read_all(&r, &resp);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0) {
+        snprintf(err, errlen, "network error reading the response");
+        goto done;
+    }
+    if (r.meta.status != 200) {
+        set_http_error(r.meta.status, resp.data ? resp.data : "",
+                       err, errlen);
+        goto done;
+    }
+    {
+        json_val *v = json_parse(resp.data, &doc, err, errlen);
+        const char *tag;
+
+        if (!v)
+            goto done;
+        tag = json_str(json_get(v, "tag_name"));
+        if (!tag || !*tag) {
+            snprintf(err, errlen, "response has no tag_name");
+            goto done;
+        }
+        if (*tag == 'v')
+            tag++;
+        snprintf(out, cap, "%s", tag);
+    }
+    ret = 0;
+
+done:
+    json_doc_free(doc);
+    if (c)
+        net_close(c);
+    buf_free(&path);
+    buf_free(&resp);
+    return ret;
+}
+
 /* --- tool use / agent ------------------------------------------------- */
 
 void api_turn_init(api_turn *t)

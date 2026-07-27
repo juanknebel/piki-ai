@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "api.h"
@@ -1037,6 +1038,94 @@ static void run_repl(repl_state *st, history *h)
     buf_free(&line);
 }
 
+/* --- update check ----------------------------------------------------- */
+
+/* Parses "x.y.z". Returns 0 and fills the parts, or -1 if malformed. */
+static int version_parse(const char *s, long v[3])
+{
+    char dot1, dot2, end;
+
+    if (sscanf(s, "%ld%c%ld%c%ld%c", &v[0], &dot1, &v[1], &dot2, &v[2],
+               &end) != 5 || dot1 != '.' || dot2 != '.')
+        return -1;
+    return 0;
+}
+
+/* >0 if a is newer than b, 0 equal, <0 older. Malformed counts as older. */
+static int version_cmp(const char *a, const char *b)
+{
+    long va[3], vb[3];
+    int i;
+
+    if (version_parse(a, va) < 0)
+        return -1;
+    if (version_parse(b, vb) < 0)
+        return 1;
+    for (i = 0; i < 3; i++) {
+        if (va[i] != vb[i])
+            return va[i] > vb[i] ? 1 : -1;
+    }
+    return 0;
+}
+
+/* Prints a dim notice when the last release seen is newer than this build.
+ * The releases page is only consulted by a detached child process, at most
+ * once a day, caching the answer in <config>/latest-release: startup never
+ * waits on the network, and with no internet nothing is ever shown. */
+static void update_check(void)
+{
+    char path[1060], latest[32] = "";
+    struct stat sb;
+    FILE *f;
+    pid_t pid;
+
+    config_path(path, sizeof path, "latest-release");
+    if (!path[0])
+        return;
+
+    f = fopen(path, "r");
+    if (f) {
+        if (fgets(latest, sizeof latest, f))
+            latest[strcspn(latest, "\n")] = '\0';
+        fclose(f);
+        if (version_cmp(latest, PIKI_VERSION) > 0)
+            printf("%spiki %s is available: %s/releases%s\n",
+                   C_DIM, latest, PIKI_REPO, C_RESET);
+    }
+
+    /* refresh at most once a day; mtime moves even on failure, so a
+     * machine without internet retries daily, not on every start */
+    if (stat(path, &sb) == 0 && time(NULL) - sb.st_mtime < 24 * 3600)
+        return;
+
+    /* double fork: the grandchild is orphaned (init reaps it), so the
+     * REPL neither waits for the network nor leaves a zombie behind */
+    pid = fork();
+    if (pid < 0)
+        return;
+    if (pid == 0) {
+        if (fork() == 0) {
+            char ver[32], err[256];
+
+            /* detach from the terminal: the fetch must survive the user
+             * closing piki (and the session) before it finishes */
+            setsid();
+            signal(SIGHUP, SIG_IGN);
+            freopen("/dev/null", "w", stderr);   /* silence, always */
+            if (api_latest_version("juanknebel/piki-ai", ver, sizeof ver,
+                                   err, sizeof err) != 0)
+                snprintf(ver, sizeof ver, "%s", latest);   /* keep old */
+            f = fopen(path, "w");
+            if (f) {
+                fprintf(f, "%s\n", ver);
+                fclose(f);
+            }
+        }
+        _exit(0);
+    }
+    waitpid(pid, NULL, 0);
+}
+
 /* --- history path ---------------------------------------------------- */
 
 /* Builds the path of a file under the config directory. Empty on failure. */
@@ -1236,6 +1325,8 @@ int main(int argc, char **argv)
         char hpath[512], spath[512];
 
         ensure_config_dir();
+        if (term_is_tty() && cfg.check_updates)
+            update_check();
         hist_init(&h);
         config_path(hpath, sizeof hpath, "history");
         if (hpath[0])

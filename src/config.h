@@ -19,6 +19,7 @@
  *   max_history = 40           # messages sent per turn
  *   max_memory = 256           # KB of history kept in RAM
  *   max_context_tokens = 8000  # rough cap on what is sent per turn
+ *   check_updates = 1          # 0 disables the daily release check
  *
  * Lines starting with # or ; are comments. Unknown keys and sections
  * are ignored (forward compatibility). */
@@ -40,6 +41,7 @@ typedef struct {
     long max_history;         /* messages kept in the sent window */
     long max_memory;          /* KB of history kept in RAM */
     long max_context_tokens;  /* rough cap on what is sent per turn */
+    int check_updates;        /* 0 disables the daily release check */
 } config_t;
 
 void config_defaults(config_t *c);
