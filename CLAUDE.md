@@ -56,9 +56,14 @@ main    arg parsing, provider resolution, REPL, agent loop, status line
 
 REPL extras (in `main.c`): `!cmd` / `!!cmd` shell escape (`!!` feeds output
 back into the chat), `/web` + `-w` web-search toggle, Tab completion of `/`
-commands (`complete_command`), and a per-prompt status line
-(`print_status`: cwd, model, session token totals). The line editor stays
-generic — REPL-specific completion lives in `main.c` behind `el_completer`.
+commands (`complete_command`), a per-prompt status line (`print_status`:
+cwd, model, context gauge with 75%/90% color warnings, session token
+totals), `/system` + `/trim` + `/paste`, and named chats
+(`/chats`, `/switch`, `/rename`, `/delete`) stored one JSON file each under
+`~/.config/piki/chats/` and autosaved after every turn (`chat_autosave`).
+A model turn is sent through `send_user_turn` — both the normal input path
+and `/paste` go through it. The line editor stays generic — REPL-specific
+completion lives in `main.c` behind `el_completer`.
 
 **Design invariants worth preserving:**
 - Parsers (`json`, `sse`, `http` chunked decoder) are **incremental state
@@ -101,7 +106,9 @@ generic — REPL-specific completion lives in `main.c` behind `el_completer`.
   the tail of the file.
 - Token usage is requested via `stream_options.include_usage` (streaming) and
   read from the response (agent turns). Providers that omit it leave the
-  counts at 0 — handle that gracefully, never assume usage is present.
+  counts at 0 — handle that gracefully, never assume usage is present. The
+  REPL then falls back to a ~4 bytes/token estimate and marks the session
+  totals with a leading `~` in the status line.
 - The REPL autosaves to `~/.config/piki/session.json` after every turn (and
   after `/new` and `/load`, to keep the file in sync). Resuming is **never**
   automatic — only `--resume` — and a failed save warns once and never

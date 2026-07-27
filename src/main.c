@@ -8,6 +8,8 @@
  * env:     OPENROUTER_API_KEY  overrides the "openrouter" provider key
  *          PIKI_BASE_URL       overrides the endpoint (e.g. http://host:11434/v1)
  */
+#include <ctype.h>
+#include <dirent.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -349,6 +351,13 @@ static void repl_help(int tools_on, int web_on)
            "  /models        list the provider's models\n"
            "  /tools         toggle tool use (now: %s)\n"
            "  /web           toggle web search (now: %s)\n"
+           "  /system [text] show or set the system prompt ('-' removes it)\n"
+           "  /trim <n>      keep only the last n messages\n"
+           "  /paste         compose a multi-line message (end with '.')\n"
+           "  /chats         list the named chats\n"
+           "  /switch <name> switch to a named chat (creates it if new)\n"
+           "  /rename <name> name (or rename) the current chat\n"
+           "  /delete <name> delete a named chat\n"
            "  /save <file>   save the conversation\n"
            "  /load <file>   load a conversation\n"
            "  /new           start a new conversation\n"
@@ -369,9 +378,96 @@ typedef struct {
     int web;
     long sent_total;   /* prompt tokens accumulated this session */
     long recv_total;   /* completion tokens accumulated this session */
+    int usage_est;     /* totals include estimated counts (shown as ~) */
     const char *session_path;  /* NULL disables autosave */
     int save_warned;           /* only complain once */
+    char chat_name[64];        /* named chat under chats/; "" = unnamed */
 } repl_state;
+
+static void config_path(char *out, size_t cap, const char *name);
+
+/* Builds the path of a named chat: <config>/chats/<name>.json. Creates the
+ * chats directory on the way (best effort). Empty on failure. */
+static void chats_path(char *out, size_t cap, const char *name)
+{
+    char dir[1060];
+
+    config_path(dir, sizeof dir, "chats");
+    if (!dir[0]) {
+        out[0] = '\0';
+        return;
+    }
+    mkdir(dir, 0700);
+    snprintf(out, cap, "%s/%s.json", dir, name);
+}
+
+/* Chat names become file names: keep them to a safe charset. */
+static int chat_name_ok(const char *s)
+{
+    size_t i;
+
+    if (!*s || strlen(s) >= 64)
+        return 0;
+    for (i = 0; s[i]; i++) {
+        if (!isalnum((unsigned char)s[i]) &&
+            s[i] != '-' && s[i] != '_' && s[i] != '.')
+            return 0;
+    }
+    return s[0] != '.';   /* no hidden files, no ".." */
+}
+
+static int cmp_str(const void *a, const void *b)
+{
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+/* Lists the chats saved under chats/, marking the active one with '*'. */
+static void list_chats(const repl_state *st)
+{
+    char dir[1060];
+    DIR *d;
+    struct dirent *e;
+    char **names = NULL;
+    size_t n = 0, cap = 0, i;
+
+    config_path(dir, sizeof dir, "chats");
+    d = dir[0] ? opendir(dir) : NULL;
+    if (d) {
+        while ((e = readdir(d)) != NULL) {
+            size_t len = strlen(e->d_name);
+
+            if (len <= 5 || strcmp(e->d_name + len - 5, ".json") != 0)
+                continue;
+            if (n == cap) {
+                cap = cap ? cap * 2 : 16;
+                names = realloc(names, cap * sizeof *names);
+                if (!names)
+                    abort();   /* same OOM policy as buf */
+            }
+            names[n] = malloc(len - 4);
+            if (!names[n])
+                abort();
+            memcpy(names[n], e->d_name, len - 5);
+            names[n][len - 5] = '\0';
+            n++;
+        }
+        closedir(d);
+    }
+    if (!n) {
+        printf("%sno named chats yet (/switch <name> starts one)%s\n",
+               C_DIM, C_RESET);
+    } else {
+        qsort(names, n, sizeof *names, cmp_str);
+        for (i = 0; i < n; i++) {
+            printf("%c %s\n",
+                   strcmp(names[i], st->chat_name) == 0 ? '*' : ' ',
+                   names[i]);
+        }
+    }
+    for (i = 0; i < n; i++)
+        free(names[i]);
+    free(names);
+}
 
 /* Persists the conversation so a crash or a power cut does not lose it.
  * Warns at most once and never interrupts the chat. */
@@ -387,6 +483,98 @@ static void session_autosave(repl_state *st)
         fprintf(stderr, "piki: could not autosave the session: %s\n", err);
         st->save_warned = 1;
     }
+}
+
+/* Named chats get their own file too, so /switch never loses anything. */
+static void chat_autosave(repl_state *st)
+{
+    char path[1200], err[256];
+
+    session_autosave(st);
+    if (!st->chat_name[0])
+        return;
+    chats_path(path, sizeof path, st->chat_name);
+    if (path[0] && chat_save(st->chat, path, err, sizeof err) != 0 &&
+        !st->save_warned) {
+        fprintf(stderr, "piki: could not save the chat: %s\n", err);
+        st->save_warned = 1;
+    }
+}
+
+/* Sends the newest user message (already added to the chat) as one model
+ * turn: agent loop or streaming, usage accounting, autosave. */
+static void send_user_turn(repl_state *st)
+{
+    token_usage tu = {0, 0};
+    char err[512];
+    size_t sent_bytes, reply_bytes;
+    int got_reply, rc;
+
+    /* what this turn will send, for the no-usage fallback below */
+    sent_bytes = st->chat->bytes;
+    if (st->lim.max_bytes && sent_bytes > st->lim.max_bytes)
+        sent_bytes = st->lim.max_bytes;
+    reply_bytes = 0;
+    got_reply = 0;
+
+    if (st->tools_on) {
+        buf_t final;
+
+        buf_init(&final);
+        rc = agent_turn(st->pv, st->model, st->chat,
+                        st->lim, st->web, &tu, &final,
+                        err, sizeof err);
+        if (rc == 0) {
+            chat_add(st->chat, "assistant", final.data);
+            reply_bytes = final.len;
+            got_reply = 1;
+        } else if (rc == -2) {
+            net_interrupt = 0;
+            fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
+            chat_pop(st->chat);
+        } else {
+            fprintf(stderr, "piki: %s\n", err);
+            chat_pop(st->chat);
+        }
+        buf_free(&final);
+    } else {
+        print_ctx pc;
+
+        rc = stream_turn(st->pv, st->model, st->chat,
+                         st->lim, st->web, &tu, &pc,
+                         err, sizeof err);
+        if (rc == 0) {
+            chat_add(st->chat, "assistant", pc.acc.data);
+            reply_bytes = pc.acc.len;
+            got_reply = 1;
+        } else if (rc == -2) {
+            net_interrupt = 0;
+            fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
+            if (pc.got_any) {
+                chat_add(st->chat, "assistant", pc.acc.data);
+                reply_bytes = pc.acc.len;
+                got_reply = 1;
+            } else {
+                chat_pop(st->chat);
+            }
+        } else {
+            fprintf(stderr, "piki: %s\n", err);
+            chat_pop(st->chat);
+        }
+        buf_free(&pc.acc);
+    }
+
+    /* Providers that omit usage leave the counts at 0: fall back to the
+     * ~4 bytes/token estimate and flag the session totals as approximate
+     * (the status line then shows them with a leading '~'). */
+    if (got_reply && tu.prompt_tokens == 0 && tu.completion_tokens == 0) {
+        tu.prompt_tokens = (long)(sent_bytes / 4);
+        tu.completion_tokens = (long)(reply_bytes / 4);
+        st->usage_est = 1;
+    }
+    st->sent_total += tu.prompt_tokens;
+    st->recv_total += tu.completion_tokens;
+    chat_autosave(st);
 }
 
 /* Processes a line starting with '/'. Returns 1 continue, 0 quit. */
@@ -409,8 +597,113 @@ static int handle_command(repl_state *st, char *line)
         repl_help(st->tools_on, st->web);
     } else if (strcmp(cmd, "/new") == 0) {
         chat_clear(st->chat);
-        session_autosave(st);   /* keep the saved session in sync */
+        st->chat_name[0] = '\0';   /* back to the unnamed session */
+        session_autosave(st);      /* keep the saved session in sync */
         printf("%snew conversation%s\n", C_DIM, C_RESET);
+    } else if (strcmp(cmd, "/system") == 0) {
+        if (arg && *arg) {
+            if (strcmp(arg, "-") == 0) {
+                chat_set_system(st->chat, NULL);
+                printf("%ssystem prompt removed%s\n", C_DIM, C_RESET);
+            } else {
+                chat_set_system(st->chat, arg);
+                printf("%ssystem prompt set%s\n", C_DIM, C_RESET);
+            }
+            chat_autosave(st);
+        } else if (st->chat->system) {
+            printf("%s%s%s\n", C_DIM, st->chat->system, C_RESET);
+        } else {
+            printf("%sno system prompt (/system <text> sets, "
+                   "/system - removes)%s\n", C_DIM, C_RESET);
+        }
+    } else if (strcmp(cmd, "/trim") == 0) {
+        long keep = arg && *arg ? strtol(arg, NULL, 10) : -1;
+
+        if (keep < 0) {
+            fputs("usage: /trim <n>  (keep only the last n messages)\n",
+                  stderr);
+        } else {
+            chat_trim(st->chat, (size_t)keep);
+            chat_autosave(st);
+            printf("%skept the last %lu messages%s\n", C_DIM,
+                   (unsigned long)st->chat->n, C_RESET);
+        }
+    } else if (strcmp(cmd, "/paste") == 0) {
+        buf_t msg;
+        char tmp[4096];
+
+        printf("%spaste the message; end with a single '.' line%s\n",
+               C_DIM, C_RESET);
+        buf_init(&msg);
+        while (fgets(tmp, sizeof tmp, stdin)) {
+            if (strcmp(tmp, ".\n") == 0 || strcmp(tmp, ".") == 0)
+                break;
+            buf_puts(&msg, tmp);
+        }
+        while (msg.len && msg.data[msg.len - 1] == '\n')
+            msg.data[--msg.len] = '\0';
+        if (msg.len) {
+            chat_add(st->chat, "user", msg.data);
+            send_user_turn(st);
+        } else {
+            printf("%snothing to send%s\n", C_DIM, C_RESET);
+        }
+        buf_free(&msg);
+    } else if (strcmp(cmd, "/chats") == 0) {
+        list_chats(st);
+    } else if (strcmp(cmd, "/switch") == 0) {
+        if (!arg || !*arg || !chat_name_ok(arg)) {
+            fputs("usage: /switch <name>  (letters, digits, - _ .)\n",
+                  stderr);
+        } else {
+            char path[1200];
+
+            chat_autosave(st);   /* do not lose the chat we leave */
+            chats_path(path, sizeof path, arg);
+            if (!path[0]) {
+                fputs("piki: no config directory\n", stderr);
+                return 1;
+            }
+            if (chat_load(st->chat, path, err, sizeof err) == 0) {
+                printf("%sswitched to %s (%lu messages)%s\n", C_DIM, arg,
+                       (unsigned long)st->chat->n, C_RESET);
+            } else {
+                chat_clear(st->chat);
+                printf("%snew chat %s%s\n", C_DIM, arg, C_RESET);
+            }
+            snprintf(st->chat_name, sizeof st->chat_name, "%s", arg);
+            chat_autosave(st);
+        }
+    } else if (strcmp(cmd, "/rename") == 0) {
+        if (!arg || !*arg || !chat_name_ok(arg)) {
+            fputs("usage: /rename <name>  (letters, digits, - _ .)\n",
+                  stderr);
+        } else {
+            char oldp[1200];
+
+            if (st->chat_name[0]) {   /* drop the file under the old name */
+                chats_path(oldp, sizeof oldp, st->chat_name);
+                if (oldp[0])
+                    remove(oldp);
+            }
+            snprintf(st->chat_name, sizeof st->chat_name, "%s", arg);
+            chat_autosave(st);
+            printf("%sthis chat is now %s%s\n", C_DIM, arg, C_RESET);
+        }
+    } else if (strcmp(cmd, "/delete") == 0) {
+        if (!arg || !*arg || !chat_name_ok(arg)) {
+            fputs("usage: /delete <name>\n", stderr);
+        } else if (strcmp(arg, st->chat_name) == 0) {
+            fputs("piki: that chat is active; /switch away first\n", stderr);
+        } else {
+            char path[1200];
+
+            chats_path(path, sizeof path, arg);
+            if (path[0] && remove(path) == 0)
+                printf("%sdeleted %s%s\n", C_DIM, arg, C_RESET);
+            else
+                fprintf(stderr, "piki: no chat named %s\n", arg);
+        }
     } else if (strcmp(cmd, "/tools") == 0) {
         st->tools_on = !st->tools_on;
         printf("%stool use: %s%s\n", C_DIM,
@@ -540,7 +833,8 @@ static void handle_bang(repl_state *st, char *line)
 
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
-    "/model", "/models", "/tools", "/web", "/save", "/load",
+    "/model", "/models", "/tools", "/web", "/system", "/trim", "/paste",
+    "/chats", "/switch", "/rename", "/delete", "/save", "/load",
     "/new", "/help", "/quit", NULL
 };
 
@@ -608,12 +902,12 @@ static const char *tail_path(const char *path, int keep,
 static void print_status(const repl_state *st)
 {
     char cwd[1024], rel[1040], p2[1040], p1[1040];
-    char up[24], dn[24], ctx[64];
+    char up[24], dn[24], ctx[96];
     const char *home = getenv("HOME");
-    const char *dir, *dirs[3], *models[2];
+    const char *dir, *dirs[3], *models[2], *est;
     buf_t line;
     int width = term_width();
-    size_t i, j, k;
+    size_t i, j, k, ctx_invis, vis;
 
     if (!getcwd(cwd, sizeof cwd))
         snprintf(cwd, sizeof cwd, "?");
@@ -635,40 +929,60 @@ static void print_status(const repl_state *st)
     models[1] = strchr(st->model, '/') ? strchr(st->model, '/') + 1
                                        : st->model;
 
+    /* '~' marks totals that include estimated counts (provider sent none) */
+    est = st->usage_est ? "~" : "";
     fmt_count(up, sizeof up, st->sent_total);
     fmt_count(dn, sizeof dn, st->recv_total);
 
-    /* how full the context is, so truncation never comes as a surprise */
+    /* How full the context is, so truncation never comes as a surprise.
+     * Near the limit the gauge turns yellow (75%) then red (90%); the
+     * escape codes add invisible bytes that the width math must ignore. */
     ctx[0] = '\0';
+    ctx_invis = 0;
     if (st->lim.max_bytes) {
         char used[24], budget[24];
+        const char *warn = "";
 
+        if (use_color && st->chat->bytes >= st->lim.max_bytes / 10 * 9)
+            warn = "\033[31m";                    /* red */
+        else if (use_color && st->chat->bytes >= st->lim.max_bytes / 4 * 3)
+            warn = "\033[33m";                    /* yellow */
         fmt_count(used, sizeof used, (long)(st->chat->bytes / 4));
         fmt_count(budget, sizeof budget, (long)(st->lim.max_bytes / 4));
-        snprintf(ctx, sizeof ctx, " | ctx %s/%s", used, budget);
+        if (*warn) {
+            /* reset+dim afterwards, back to the rest of the line's look */
+            snprintf(ctx, sizeof ctx, " | %sctx %s/%s\033[0m\033[2m",
+                     warn, used, budget);
+            ctx_invis = strlen(warn) + strlen("\033[0m\033[2m");
+        } else {
+            snprintf(ctx, sizeof ctx, " | ctx %s/%s", used, budget);
+        }
     }
 
     /* Degrade in order of what we can most afford to lose: path depth,
      * then the model vendor, and only then the context gauge. */
     buf_init(&line);
+    vis = 0;
     for (k = 0; k < 2; k++) {
         for (i = 0; i < 2; i++) {
             for (j = 0; j < 3; j++) {
                 buf_reset(&line);
-                buf_printf(&line, "%s | %s%s%s%s | up %s dn %s",
+                buf_printf(&line, "%s | %s%s%s%s | up %s%s dn %s%s",
                            dirs[j], models[i],
                            st->tools_on ? " [tools]" : "",
                            st->web ? " [web]" : "",
-                           k ? "" : ctx, up, dn);
-                if ((int)line.len <= width)
+                           k ? "" : ctx, est, up, est, dn);
+                vis = line.len - (k ? 0 : ctx_invis);
+                if ((int)vis <= width)
                     goto fits;
             }
         }
     }
 fits:
-    /* last resort: hard-truncate rather than wrap */
+    /* Last resort: hard-truncate rather than wrap (only reachable with the
+     * gauge already dropped, so no escape code can be cut in half). */
     printf("%s%.*s%s\n", C_DIM,
-           line.len <= (size_t)width ? (int)line.len : width,
+           vis <= (size_t)width ? (int)line.len : width,
            line.data, C_RESET);
     buf_free(&line);
 }
@@ -676,7 +990,6 @@ fits:
 static void run_repl(repl_state *st, history *h)
 {
     buf_t line;
-    char err[512];
 
     buf_init(&line);
     if (term_is_tty())
@@ -689,7 +1002,6 @@ static void run_repl(repl_state *st, history *h)
         const char *prompt = st->web
             ? (use_color ? "\033[1;36mweb> \033[0m" : "web> ")
             : C_PROMPT;
-        token_usage tu = {0, 0};
         int rc;
 
         if (term_is_tty())
@@ -720,49 +1032,7 @@ static void run_repl(repl_state *st, history *h)
 
         hist_add(h, line.data);
         chat_add(st->chat, "user", line.data);
-
-        if (st->tools_on) {
-            buf_t final;
-
-            buf_init(&final);
-            rc = agent_turn(st->pv, st->model, st->chat,
-                            st->lim, st->web, &tu, &final,
-                            err, sizeof err);
-            if (rc == 0) {
-                chat_add(st->chat, "assistant", final.data);
-            } else if (rc == -2) {
-                net_interrupt = 0;
-                fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
-                chat_pop(st->chat);
-            } else {
-                fprintf(stderr, "piki: %s\n", err);
-                chat_pop(st->chat);
-            }
-            buf_free(&final);
-        } else {
-            print_ctx pc;
-
-            rc = stream_turn(st->pv, st->model, st->chat,
-                             st->lim, st->web, &tu, &pc,
-                             err, sizeof err);
-            if (rc == 0) {
-                chat_add(st->chat, "assistant", pc.acc.data);
-            } else if (rc == -2) {
-                net_interrupt = 0;
-                fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
-                if (pc.got_any)
-                    chat_add(st->chat, "assistant", pc.acc.data);
-                else
-                    chat_pop(st->chat);
-            } else {
-                fprintf(stderr, "piki: %s\n", err);
-                chat_pop(st->chat);
-            }
-            buf_free(&pc.acc);
-        }
-        st->sent_total += tu.prompt_tokens;
-        st->recv_total += tu.completion_tokens;
-        session_autosave(st);
+        send_user_turn(st);
     }
     buf_free(&line);
 }
@@ -999,6 +1269,8 @@ int main(int argc, char **argv)
         st.web = web;
         st.sent_total = 0;
         st.recv_total = 0;
+        st.usage_est = 0;
+        st.chat_name[0] = '\0';
         st.session_path = spath[0] ? spath : NULL;
         st.save_warned = 0;
         run_repl(&st, &h);

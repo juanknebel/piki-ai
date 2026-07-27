@@ -103,6 +103,12 @@ void chat_clear(chat_t *c)
         chat_pop(c);
 }
 
+void chat_trim(chat_t *c, size_t keep)
+{
+    while (c->n > keep)
+        evict_oldest(c);
+}
+
 size_t chat_window(const chat_t *c, size_t max_msgs, size_t max_bytes,
                    chat_msg *out, size_t outcap)
 {

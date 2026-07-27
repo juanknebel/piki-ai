@@ -160,6 +160,24 @@ int main(void)
         chat_free(&c);
     }
 
+    /* --- trim: keeps only the newest n, system untouched --- */
+    {
+        chat_init(&c);
+        chat_set_system(&c, "sys");
+        chat_add(&c, "user", "aaaaa");
+        chat_add(&c, "assistant", "bbbbb");
+        chat_add(&c, "user", "ccccc");
+        chat_trim(&c, 5);                  /* larger than n: no-op */
+        CHECK(c.n == 3 && c.bytes == 15);
+        chat_trim(&c, 2);
+        CHECK(c.n == 2 && c.bytes == 10);
+        CHECK(strcmp(c.msgs[0].content, "bbbbb") == 0);
+        CHECK(c.system && strcmp(c.system, "sys") == 0);
+        chat_trim(&c, 0);
+        CHECK(c.n == 0 && c.bytes == 0);
+        chat_free(&c);
+    }
+
     if (fails) {
         fprintf(stderr, "test_chat: %d failures\n", fails);
         return 1;

@@ -129,6 +129,12 @@ starts fresh (resuming is never automatic). If saving fails it warns once and
 the chat carries on. For conversations you want to keep around, use the
 explicit `/save <file>` and `/load <file>`.
 
+For several conversations in parallel, name them: `/switch errands` saves the
+chat you are leaving and opens (or creates) the chat `errands`, `/chats`
+lists them (`*` marks the active one), `/rename` names the current one and
+`/delete` removes one. Named chats live in `~/.config/piki/chats/`, one JSON
+file each, and autosave after every turn just like the session.
+
 ### Web search
 
 `-w` (or `/web` in the REPL) enables OpenRouter's web-search plugin, so the
@@ -145,6 +151,13 @@ the flag.
 /models        list the provider's models
 /tools         enable/disable tool use
 /web           enable/disable web search
+/system [text] show or set the system prompt ('-' removes it)
+/trim <n>      keep only the last n messages (shrinks the context)
+/paste         compose a multi-line message (end with a single '.' line)
+/chats         list the named chats
+/switch <name> switch to a named chat (creates it if new)
+/rename <name> name (or rename) the current chat
+/delete <name> delete a named chat
 /save <file>   save the conversation (JSON)
 /load <file>   load a conversation
 /new           start a new conversation
@@ -174,13 +187,16 @@ totals (`up` = prompt/sent, `dn` = completion/received):
 always tell at a glance whether the model is allowed to touch your files or
 search the web. `ctx` is the estimated size of the conversation against
 `max_context_tokens`, so you can see truncation coming and start a `/new`
-before older messages get dropped.
+(or `/trim`) before older messages get dropped; it turns yellow at 75% and
+red at 90% of the budget.
 
 The line always fits on one row: on a narrow terminal it drops the model's
 vendor prefix, then shortens the path, then hides the context gauge, rather
 than wrapping and eating a second row of an 80x25 console. Token counts come
-from the provider's usage accounting (OpenRouter reports them; some local
-servers may not).
+from the provider's usage accounting (OpenRouter reports them). When a
+provider does not report usage (some local servers), the counts are estimated
+at ~4 bytes per token and shown with a leading `~` (`up ~1234 dn ~567`) to
+tell them apart from real numbers.
 
 ### Tool use
 

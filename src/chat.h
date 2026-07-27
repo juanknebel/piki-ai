@@ -32,6 +32,7 @@ void chat_set_system(chat_t *c, const char *s);   /* NULL removes it */
 void chat_add(chat_t *c, const char *role, const char *content);
 void chat_pop(chat_t *c);      /* discards the last message */
 void chat_clear(chat_t *c);    /* clears the history, keeps the system */
+void chat_trim(chat_t *c, size_t keep);  /* keeps only the newest n messages */
 
 /* Builds the window to send: system (if any) + the newest messages that
  * fit within BOTH max_msgs and max_bytes (0 = no byte limit), and within
