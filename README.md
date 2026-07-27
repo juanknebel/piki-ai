@@ -117,7 +117,16 @@ PIKI_BASE_URL=http://192.168.1.10:11434/v1 piki -m llama3.2 "hi"
 ```
 
 Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use),
-`-w` (web search), `--version`, `--help`.
+`-w` (web search), `--resume`, `--version`, `--help`.
+
+### Sessions
+
+The REPL saves the conversation after every turn to
+`~/.config/piki/session.json`, so a crash or a power cut does not lose it.
+`piki --resume` continues that last conversation; without the flag it always
+starts fresh (resuming is never automatic). If saving fails it warns once and
+the chat carries on. For conversations you want to keep around, use the
+explicit `/save <file>` and `/load <file>`.
 
 ### Web search
 

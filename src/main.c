@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -48,11 +49,12 @@ static void on_sigint(int sig)
 static void usage(void)
 {
     fputs("usage: piki [-m model] [-p provider] [-s system_prompt] "
-          "[-t] [-w] [\"question\"]\n"
+          "[-t] [-w] [--resume] [\"question\"]\n"
           "     with no question it enters interactive mode (/help for "
           "commands)\n"
           "     -t enables tool use (read/write files, run commands)\n"
           "     -w enables OpenRouter web search\n"
+          "     --resume continues the last conversation\n"
           "config: ~/.config/piki/config\n"
           "env: OPENROUTER_API_KEY, PIKI_BASE_URL\n"
           "\n" PIKI_REPO "\n", stderr);
@@ -367,7 +369,25 @@ typedef struct {
     int web;
     long sent_total;   /* prompt tokens accumulated this session */
     long recv_total;   /* completion tokens accumulated this session */
+    const char *session_path;  /* NULL disables autosave */
+    int save_warned;           /* only complain once */
 } repl_state;
+
+/* Persists the conversation so a crash or a power cut does not lose it.
+ * Warns at most once and never interrupts the chat. */
+static void session_autosave(repl_state *st)
+{
+    char err[256];
+
+    if (!st->session_path || !*st->session_path)
+        return;
+    if (chat_save(st->chat, st->session_path, err, sizeof err) == 0)
+        return;
+    if (!st->save_warned) {
+        fprintf(stderr, "piki: could not autosave the session: %s\n", err);
+        st->save_warned = 1;
+    }
+}
 
 /* Processes a line starting with '/'. Returns 1 continue, 0 quit. */
 static int handle_command(repl_state *st, char *line)
@@ -389,6 +409,7 @@ static int handle_command(repl_state *st, char *line)
         repl_help(st->tools_on, st->web);
     } else if (strcmp(cmd, "/new") == 0) {
         chat_clear(st->chat);
+        session_autosave(st);   /* keep the saved session in sync */
         printf("%snew conversation%s\n", C_DIM, C_RESET);
     } else if (strcmp(cmd, "/tools") == 0) {
         st->tools_on = !st->tools_on;
@@ -436,6 +457,7 @@ static int handle_command(repl_state *st, char *line)
         if (!arg || !*arg) {
             fputs("usage: /load <file>\n", stderr);
         } else if (chat_load(st->chat, arg, err, sizeof err) == 0) {
+            session_autosave(st);
             printf("%sloaded %s (%lu messages)%s\n", C_DIM, arg,
                    (unsigned long)st->chat->n, C_RESET);
         } else {
@@ -664,23 +686,46 @@ static void run_repl(repl_state *st, history *h)
         }
         st->sent_total += tu.prompt_tokens;
         st->recv_total += tu.completion_tokens;
+        session_autosave(st);
     }
     buf_free(&line);
 }
 
 /* --- history path ---------------------------------------------------- */
 
-static void history_path(char *out, size_t cap)
+/* Builds the path of a file under the config directory. Empty on failure. */
+static void config_path(char *out, size_t cap, const char *name)
 {
     const char *xdg = getenv("XDG_CONFIG_HOME");
     const char *home = getenv("HOME");
 
     if (xdg && *xdg)
-        snprintf(out, cap, "%s/piki/history", xdg);
+        snprintf(out, cap, "%s/piki/%s", xdg, name);
     else if (home && *home)
-        snprintf(out, cap, "%s/.config/piki/history", home);
+        snprintf(out, cap, "%s/.config/piki/%s", home, name);
     else
         out[0] = '\0';
+}
+
+/* Creates the config directory if needed, so the history and session files
+ * can be written even when the user has no config file. Best effort. */
+static void ensure_config_dir(void)
+{
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    char path[512];
+
+    if (xdg && *xdg) {
+        mkdir(xdg, 0700);       /* the parent may not exist either */
+        snprintf(path, sizeof path, "%s/piki", xdg);
+    } else if (home && *home) {
+        snprintf(path, sizeof path, "%s/.config", home);
+        mkdir(path, 0700);
+        snprintf(path, sizeof path, "%s/.config/piki", home);
+    } else {
+        return;
+    }
+    mkdir(path, 0700);
 }
 
 int main(int argc, char **argv)
@@ -698,6 +743,7 @@ int main(int argc, char **argv)
     char err[512];
     int tools_on = 0;
     int web = 0;
+    int resume = 0;
     int i, rc;
 
     for (i = 1; i < argc && argv[i][0] == '-' && argv[i][1]; i++) {
@@ -722,6 +768,8 @@ int main(int argc, char **argv)
             tools_on = 1;
         } else if (strcmp(argv[i], "-w") == 0) {
             web = 1;
+        } else if (strcmp(argv[i], "--resume") == 0) {
+            resume = 1;
         } else {
             usage();
             return 2;
@@ -839,12 +887,32 @@ int main(int argc, char **argv)
     {
         repl_state st;
         history h;
-        char hpath[512];
+        char hpath[512], spath[512];
 
+        ensure_config_dir();
         hist_init(&h);
-        history_path(hpath, sizeof hpath);
+        config_path(hpath, sizeof hpath, "history");
         if (hpath[0])
             hist_load(&h, hpath);
+        config_path(spath, sizeof spath, "session.json");
+
+        if (resume && spath[0]) {
+            struct stat sb;
+
+            /* no saved session yet is not an error: just start fresh */
+            if (stat(spath, &sb) == 0) {
+                if (chat_load(&chat, spath, err, sizeof err) == 0) {
+                    /* the file also restores its system prompt; an
+                     * explicit -s is a deliberate override, so re-apply it */
+                    if (system_prompt)
+                        chat_set_system(&chat, system_prompt);
+                    printf("%sresumed %lu messages%s\n", C_DIM,
+                           (unsigned long)chat.n, C_RESET);
+                } else {
+                    fprintf(stderr, "piki: could not resume: %s\n", err);
+                }
+            }
+        }
 
         st.pv = &pv;
         st.model = model;
@@ -855,6 +923,8 @@ int main(int argc, char **argv)
         st.web = web;
         st.sent_total = 0;
         st.recv_total = 0;
+        st.session_path = spath[0] ? spath : NULL;
+        st.save_warned = 0;
         run_repl(&st, &h);
 
         if (hpath[0])

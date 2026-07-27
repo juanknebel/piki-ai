@@ -102,6 +102,10 @@ generic — REPL-specific completion lives in `main.c` behind `el_completer`.
 - Token usage is requested via `stream_options.include_usage` (streaming) and
   read from the response (agent turns). Providers that omit it leave the
   counts at 0 — handle that gracefully, never assume usage is present.
+- The REPL autosaves to `~/.config/piki/session.json` after every turn (and
+  after `/new` and `/load`, to keep the file in sync). Resuming is **never**
+  automatic — only `--resume` — and a failed save warns once and never
+  interrupts the chat.
 
 ## Release builds
 
