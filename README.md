@@ -18,6 +18,8 @@ local servers like **Ollama** or **llama.cpp** (`llama-server`).
 - Line editor with history, optional tool use (read/write files, run
   commands with confirmation), and save/load conversations.
 
+![piki chatting in the terminal](screenshots/01-chat.png)
+
 ## Build
 
 ### Requirements
@@ -136,6 +138,8 @@ lists them (`*` marks the active one), `/rename` names the current one and
 `/delete` removes one. Named chats live in `~/.config/piki/chats/`, one JSON
 file each, and autosave after every turn just like the session.
 
+![named chats with /switch and /chats](screenshots/03-chats.png)
+
 ### Update check
 
 On startup the REPL mentions, in one dim line, when a newer release exists
@@ -153,6 +157,8 @@ changes to `web>` and the banner shows `[web]`. Web search is billed
 separately by OpenRouter. Equivalent to appending `:online` to the model
 slug (e.g. `-m anthropic/claude-haiku-4.5:online`), which also works without
 the flag.
+
+![the web> prompt and the [web] tag](screenshots/06-web.png)
 
 ### REPL commands
 
@@ -227,6 +233,10 @@ Modify the system, always ask for your `y/N` first:
   and no risk of mangling the rest.
 - `write_file` — write/overwrite a whole file.
 - `run_command` — run a shell command.
+
+![read-only tool running unattended](screenshots/04-tools.png)
+
+![dangerous tool asking for confirmation](screenshots/05-confirm.png)
 
 Requires a model with function calling support. Note that file contents are
 untrusted input: a repository could contain text trying to steer the model,
