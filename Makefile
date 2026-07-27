@@ -64,6 +64,7 @@ SRC_test_sse  := tests/test_sse.c src/sse.c src/buf.c
 SRC_test_chat := tests/test_chat.c src/chat.c src/json.c src/buf.c
 SRC_test_conf := tests/test_config.c src/config.c src/buf.c
 SRC_test_edit := tests/test_edit.c src/edit.c src/buf.c
+SRC_test_tool := tests/test_tools.c src/tools.c src/json.c src/buf.c
 
 $(B)/test_buf: $(SRC_test_buf) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_buf)
@@ -100,13 +101,19 @@ $(B)/test_edit: $(SRC_test_edit) | $(B)
 $(B)/test_edit.asan: $(SRC_test_edit) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_edit)
 
+$(B)/test_tools: $(SRC_test_tool) | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_tool)
+$(B)/test_tools.asan: $(SRC_test_tool) | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_tool)
+
 TESTBINS := $(B)/test_buf $(B)/test_buf.asan \
             $(B)/test_json $(B)/test_json.asan \
             $(B)/test_http $(B)/test_http.asan \
             $(B)/test_sse $(B)/test_sse.asan \
             $(B)/test_chat $(B)/test_chat.asan \
             $(B)/test_config $(B)/test_config.asan \
-            $(B)/test_edit $(B)/test_edit.asan
+            $(B)/test_edit $(B)/test_edit.asan \
+            $(B)/test_tools $(B)/test_tools.asan
 
 test: $(TESTBINS)
 	@$(B)/test_buf
@@ -123,6 +130,8 @@ test: $(TESTBINS)
 	@$(B)/test_config.asan
 	@$(B)/test_edit
 	@$(B)/test_edit.asan
+	@$(B)/test_tools
+	@$(B)/test_tools.asan
 
 release:
 	sh tools/build-release.sh

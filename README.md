@@ -162,12 +162,25 @@ up 1234 dn 567`. Token counts come from the provider's usage accounting
 
 With `-t` (or `/tools` in the REPL) the model can request:
 
-- `read_file` — read a file.
-- `write_file` — write/overwrite (asks for confirmation).
-- `run_command` — run a shell command (asks for confirmation).
+Read-only, run without asking:
 
-Actions that modify the system require your `y/N` before running.
-Requires a model with function calling support.
+- `read_file` — read a file.
+- `list_files` — list a directory.
+- `search_files` — literal substring search (not a regex) in a file or
+  recursively in a directory, skipping hidden and binary files.
+
+Modify the system, always ask for your `y/N` first:
+
+- `edit_file` — replace a piece of text. The text to replace must appear
+  exactly once, otherwise the edit is refused and the model is told to quote
+  more context. Preferred over `write_file` for existing files: fewer tokens
+  and no risk of mangling the rest.
+- `write_file` — write/overwrite a whole file.
+- `run_command` — run a shell command.
+
+Requires a model with function calling support. Note that file contents are
+untrusted input: a repository could contain text trying to steer the model,
+which is why nothing can be written or executed without your confirmation.
 
 ## Structure
 

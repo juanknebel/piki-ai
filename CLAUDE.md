@@ -49,7 +49,8 @@ config  INI parser (~/.config/piki/config)
 edit    raw-termios line editor + history + Tab completion (via a callback;
         pure buffer ops are testable)
 term    line reading; delegates to edit on a TTY, falls back to fgets
-tools   agent tools: read_file / write_file / run_command
+tools   agent tools: read-only (read_file, list_files, search_files) and
+        confirmed (edit_file, write_file, run_command)
 main    arg parsing, provider resolution, REPL, agent loop, status line
 ```
 
@@ -87,8 +88,17 @@ generic — REPL-specific completion lives in `main.c` behind `el_completer`.
   SSE deltas is not worth the complexity. The agent loop rebuilds the raw
   messages JSON array by hand (assistant messages carry `tool_calls`, tool
   results carry `tool_call_id`).
-- Dangerous tools (`write_file`, `run_command`) require a y/N confirmation
-  before running; a rejection is reported back to the model as a tool result.
+- Tools split by `tool_is_dangerous`: read-only ones (`read_file`,
+  `list_files`, `search_files`) run unattended, while the ones that change
+  the system (`edit_file`, `write_file`, `run_command`) require a y/N
+  confirmation; a rejection is reported back to the model as a tool result.
+  That confirmation is also the mitigation for untrusted file contents
+  trying to steer the model.
+- `edit_file` requires its `old_string` to match **exactly once** — zero or
+  several matches is an error returned to the model, which pushes it to
+  quote more context instead of guessing. It also refuses files bigger than
+  `MAX_READ`, since `slurp` truncates and writing that back would destroy
+  the tail of the file.
 - Token usage is requested via `stream_options.include_usage` (streaming) and
   read from the response (agent turns). Providers that omit it leave the
   counts at 0 — handle that gracefully, never assume usage is present.
