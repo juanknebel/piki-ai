@@ -891,36 +891,131 @@ static void handle_bang(repl_state *st, char *line)
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
     "/model", "/models", "/tools", "/web", "/system", "/trim", "/paste",
-    "/chats", "/switch", "/rename", "/delete", "/save", "/load",
+    "/chats", "/switch", "/rename", "/delete", "/save", "/load", "/export",
     "/new", "/help", "/quit", NULL
 };
 
-/* Tab completer: when the line is a bare command token (starts with '/' and
- * has no space), returns the matching commands. */
+static void complete_files(const char *prefix, char ***out, size_t *n)
+{
+    const char *slash = strrchr(prefix, '/');
+    char dir[1024], base[1024];
+    DIR *d;
+    struct dirent *e;
+
+    if (slash) {
+        size_t dl = (size_t)(slash - prefix) + 1;
+        if (dl >= sizeof dir) return;
+        memcpy(dir, prefix, dl);
+        dir[dl] = '\0';
+        snprintf(base, sizeof base, "%s", slash + 1);
+    } else {
+        snprintf(dir, sizeof dir, ".");
+        snprintf(base, sizeof base, "%s", prefix);
+    }
+    d = opendir(dir[0] ? dir : ".");
+    if (!d) return;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.' && base[0] != '.') continue;
+        if (strncmp(e->d_name, base, strlen(base)) != 0) continue;
+        char full[2048];
+        if (slash) snprintf(full, sizeof full, "%.*s%s", (int)(slash - prefix + 1), prefix, e->d_name);
+        else snprintf(full, sizeof full, "%s", e->d_name);
+        /* append slash for directories */
+        char path[2048];
+        if (dir[0]) snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        else snprintf(path, sizeof path, "%s", e->d_name);
+        struct stat st;
+        int isdir = stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+        char *cand;
+        if (isdir) {
+            size_t l = strlen(full);
+            cand = malloc(l + 2);
+            if (!cand) continue;
+            memcpy(cand, full, l);
+            cand[l] = '/';
+            cand[l+1] = '\0';
+        } else {
+            cand = strdup(full);
+            if (!cand) continue;
+        }
+        char **tmp = realloc(*out, (*n + 1) * sizeof **out);
+        if (!tmp) { free(cand); continue; }
+        *out = tmp;
+        (*out)[(*n)++] = cand;
+    }
+    closedir(d);
+}
+
+static void complete_chats(const char *prefix, char ***out, size_t *n)
+{
+    char dir[1200];
+    DIR *d;
+    struct dirent *e;
+    const char *home = getenv("HOME");
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+
+    if (xdg && *xdg) snprintf(dir, sizeof dir, "%s/piki/chats", xdg);
+    else if (home) snprintf(dir, sizeof dir, "%s/.config/piki/chats", home);
+    else return;
+    d = opendir(dir);
+    if (!d) return;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        size_t l = strlen(e->d_name);
+        if (l > 5 && strcmp(e->d_name + l - 5, ".json") == 0) {
+            char name[256];
+            size_t nl = l - 5;
+            if (nl >= sizeof name) continue;
+            memcpy(name, e->d_name, nl);
+            name[nl] = '\0';
+            if (strncmp(name, prefix, strlen(prefix)) != 0) continue;
+            char *cand = strdup(name);
+            if (!cand) continue;
+            char **tmp = realloc(*out, (*n + 1) * sizeof **out);
+            if (!tmp) { free(cand); continue; }
+            *out = tmp;
+            (*out)[(*n)++] = cand;
+        }
+    }
+    closedir(d);
+}
+
+/* Tab completer: bare command or second token (path/chat). */
 static void complete_command(const char *line, char ***out, size_t *n,
                              void *user)
 {
-    size_t len = strlen(line), i, cap = 0;
+    const char *sp;
+    size_t len;
 
     (void)user;
     *out = NULL;
     *n = 0;
-    if (len == 0 || line[0] != '/' || strchr(line, ' '))
-        return;
-    for (i = 0; REPL_COMMANDS[i]; i++) {
-        if (strncmp(REPL_COMMANDS[i], line, len) != 0)
-            continue;
-        if (*n == cap) {
-            cap = cap ? cap * 2 : 8;
-            *out = realloc(*out, cap * sizeof **out);
-            if (!*out) {
-                *n = 0;
-                return;
-            }
+    if (!line || line[0] != '/') return;
+    sp = strchr(line, ' ');
+    if (!sp) {
+        len = strlen(line);
+        for (size_t i = 0; REPL_COMMANDS[i]; i++) {
+            if (strncmp(REPL_COMMANDS[i], line, len) != 0) continue;
+            char **tmp = realloc(*out, (*n + 1) * sizeof **out);
+            if (!tmp) { *n = 0; return; }
+            *out = tmp;
+            (*out)[*n] = strdup(REPL_COMMANDS[i]);
+            if ((*out)[*n]) (*n)++;
         }
-        (*out)[*n] = strdup(REPL_COMMANDS[i]);
-        if ((*out)[*n])
-            (*n)++;
+        return;
+    }
+    /* second token — dispatch by command */
+    size_t cmdlen = (size_t)(sp - line);
+    char cmd[32];
+    if (cmdlen >= sizeof cmd) return;
+    memcpy(cmd, line, cmdlen);
+    cmd[cmdlen] = '\0';
+    const char *arg = sp + 1;
+    while (*arg == ' ') arg++;
+    if (strcmp(cmd, "/save") == 0 || strcmp(cmd, "/load") == 0 || strcmp(cmd, "/export") == 0) {
+        complete_files(arg, out, n);
+    } else if (strcmp(cmd, "/switch") == 0 || strcmp(cmd, "/rename") == 0 || strcmp(cmd, "/delete") == 0) {
+        complete_chats(arg, out, n);
     }
 }
 
