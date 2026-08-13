@@ -14,6 +14,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -1423,6 +1427,43 @@ int main(int argc, char **argv)
             fprintf(stderr, "piki: missing API key for provider %s "
                     "(config or OPENROUTER_API_KEY)\n", name);
             return 1;
+        }
+    }
+
+    /* quick health probe for local providers: 1s connect, non-blocking */
+    {
+        int fd = -1;
+        struct addrinfo hints, *res = NULL;
+        char portstr[16];
+        int ok = 0;
+
+        memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        snprintf(portstr, sizeof portstr, "%d", pv.port);
+        if (getaddrinfo(pv.host, portstr, &hints, &res) == 0 && res) {
+            fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+            if (fd >= 0) {
+                int flags = fcntl(fd, F_GETFL, 0);
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+                if (connect(fd, res->ai_addr, res->ai_addrlen) == 0) ok = 1;
+                else if (errno == EINPROGRESS) {
+                    fd_set wf;
+                    struct timeval tv = {1, 0};
+                    FD_ZERO(&wf); FD_SET(fd, &wf);
+                    if (select(fd + 1, NULL, &wf, NULL, &tv) > 0) {
+                        int err = 0; socklen_t el = sizeof err;
+                        getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &el);
+                        if (err == 0) ok = 1;
+                    }
+                }
+                close(fd);
+            }
+            freeaddrinfo(res);
+        }
+        if (!ok && term_is_tty()) {
+            fprintf(stderr, "%swarning: provider %s:%d unreachable%s\n",
+                    C_DIM, pv.host, pv.port, C_RESET);
         }
     }
 
