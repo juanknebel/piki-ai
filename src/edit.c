@@ -364,6 +364,30 @@ int edit_readline(const char *prompt, buf_t *out, history *h,
         } else if (c == 23) {         /* Ctrl-W */
             el_kill_prev_word(&e);
             redraw(prompt, &e);
+        } else if (c == 18) {         /* Ctrl-R: reverse history search */
+            if (h && h->n && e.buf.len) {
+                size_t i = hpos ? hpos - 1 : h->n - 1;
+                size_t start = i;
+                int found = 0;
+                do {
+                    if (strstr(h->items[i], e.buf.data)) {
+                        if (hpos == h->n) {
+                            buf_reset(&saved);
+                            buf_append(&saved, e.buf.data, e.buf.len);
+                        }
+                        hpos = i;
+                        el_set(&e, h->items[i]);
+                        redraw(prompt, &e);
+                        found = 1;
+                        break;
+                    }
+                    if (i == 0) i = h->n - 1;
+                    else i--;
+                } while (i != start);
+                if (!found) (void)write(STDOUT_FILENO, "\x07", 1); /* bell */
+            } else {
+                (void)write(STDOUT_FILENO, "\x07", 1);
+            }
         } else if (c == 9) {          /* Tab: completion */
             do_complete(prompt, &e, comp, cuser);
         } else if (c == 27) {         /* escape sequence */
