@@ -795,6 +795,14 @@ static int handle_command(repl_state *st, char *line)
         } else {
             fprintf(stderr, "piki: %s\n", err);
         }
+    } else if (strcmp(cmd, "/export") == 0) {
+        if (!arg || !*arg) {
+            fputs("usage: /export <file.md>\n", stderr);
+        } else if (chat_export_md(st->chat, arg, err, sizeof err) == 0) {
+            printf("%sexported to %s%s\n", C_DIM, arg, C_RESET);
+        } else {
+            fprintf(stderr, "piki: %s\n", err);
+        }
     } else if (strcmp(cmd, "/load") == 0) {
         if (!arg || !*arg) {
             fputs("usage: /load <file>\n", stderr);

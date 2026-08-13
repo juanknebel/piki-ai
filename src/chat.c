@@ -243,3 +243,27 @@ done:
     buf_free(&text);
     return ret;
 }
+
+int chat_export_md(const chat_t *c, const char *path, char *err, size_t errlen)
+{
+    FILE *f = fopen(path, "w");
+    size_t i;
+
+    if (!f) {
+        snprintf(err, errlen, "could not open %s", path);
+        return -1;
+    }
+    if (c->system) {
+        fprintf(f, "# System\n\n%s\n\n", c->system);
+    }
+    for (i = 0; i < c->n; i++) {
+        const char *role = c->msgs[i].role;
+        const char *content = c->msgs[i].content;
+        fprintf(f, "## %s\n\n%s\n\n", role, content);
+    }
+    if (fclose(f) != 0) {
+        snprintf(err, errlen, "error writing %s", path);
+        return -1;
+    }
+    return 0;
+}

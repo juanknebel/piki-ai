@@ -46,4 +46,7 @@ size_t chat_window(const chat_t *c, size_t max_msgs, size_t max_bytes,
 int chat_save(const chat_t *c, const char *path, char *err, size_t errlen);
 int chat_load(chat_t *c, const char *path, char *err, size_t errlen);
 
+/* Export as Markdown: system as header + role sections. 0 ok, -1 error. */
+int chat_export_md(const chat_t *c, const char *path, char *err, size_t errlen);
+
 #endif /* PIKI_CHAT_H */
