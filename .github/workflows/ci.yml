@@ -69,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build on Haiku r1beta5 (x86-64)
+      - name: Build and test on Haiku r1beta5 (x86-64)
         uses: cross-platform-actions/action@v0.29.0
         with:
           operating_system: haiku
@@ -78,6 +78,7 @@ jobs:
           run: |
             uname -a
             pkgman install -y openssl3_devel
+            make test
             make
             strip build/piki
             ./build/piki --version
