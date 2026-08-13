@@ -52,6 +52,11 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen);
 /* Reads the standard path. 0 ok, 1 no file, -1 parse error. */
 int config_load(config_t *c, char *err, size_t errlen);
 
+/* Persists the default model to the config file. Creates the file and its
+ * directory if needed, preserving existing providers and keys.
+ * 0 ok, -1 error (description in err). */
+int config_save_model(const char *model, char *err, size_t errlen);
+
 cfg_provider *config_provider(config_t *c, const char *name);
 
 #endif /* PIKI_CONFIG_H */

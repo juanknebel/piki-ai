@@ -163,25 +163,33 @@ the flag.
 ### REPL commands
 
 ```
-/model [id]    show or change the model
-/models        list the provider's models
-/tools         enable/disable tool use
-/web           enable/disable web search
-/system [text] show or set the system prompt ('-' removes it)
-/trim <n>      keep only the last n messages (shrinks the context)
-/paste         compose a multi-line message (end with a single '.' line)
-/chats         list the named chats
-/switch <name> switch to a named chat (creates it if new)
-/rename <name> name (or rename) the current chat
-/delete <name> delete a named chat
-/save <file>   save the conversation (JSON)
-/load <file>   load a conversation
-/new           start a new conversation
-/help          help
-/quit          exit (also Ctrl-D)
-!cmd           run a shell command (output shown to you)
-!!cmd          run a shell command and add its output to the chat
+/model [id]         show or change the model
+/model save         save the current model as default (writes ~/.config/piki/config)
+/model <id> save    change to <id> and save it as default
+/default [id]       alias for /model save
+/models             list the provider's models
+/tools              enable/disable tool use
+/web                enable/disable web search
+/system [text]      show or set the system prompt ('-' removes it)
+/trim <n>           keep only the last n messages (shrinks the context)
+/paste              compose a multi-line message (end with a single '.' line)
+/chats              list the named chats
+/switch <name>      switch to a named chat (creates it if new)
+/rename <name>      name (or rename) the current chat
+/delete <name>      delete a named chat
+/save <file>        save the conversation (JSON)
+/load <file>        load a conversation
+/new                start a new conversation
+/help               help
+/quit               exit (also Ctrl-D)
+!cmd                run a shell command (output shown to you)
+!!cmd               run a shell command and add its output to the chat
 ```
+
+` /model save` (or `/default`) persists the model to `[defaults] model = ...` in
+`~/.config/piki/config` so it becomes the default for future sessions; it
+preserves existing providers and other `[defaults]` keys and creates the file
+if missing.
 
 ![/help in the REPL](screenshots/02-help.png)
 

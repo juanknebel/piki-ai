@@ -410,24 +410,27 @@ done:
 static void repl_help(int tools_on, int web_on)
 {
     printf("commands:\n"
-           "  /model [id]    show or change the model\n"
-           "  /models        list the provider's models\n"
-           "  /tools         toggle tool use (now: %s)\n"
-           "  /web           toggle web search (now: %s)\n"
-           "  /system [text] show or set the system prompt ('-' removes it)\n"
-           "  /trim <n>      keep only the last n messages\n"
-           "  /paste         compose a multi-line message (end with '.')\n"
-           "  /chats         list the named chats\n"
-           "  /switch <name> switch to a named chat (creates it if new)\n"
-           "  /rename <name> name (or rename) the current chat\n"
-           "  /delete <name> delete a named chat\n"
-           "  /save <file>   save the conversation\n"
-           "  /load <file>   load a conversation\n"
-           "  /new           start a new conversation\n"
-           "  /help          this help\n"
-           "  /quit          quit (also Ctrl-D)\n"
-           "  !cmd           run a shell command (output shown to you)\n"
-           "  !!cmd          run a shell command, add its output to the chat\n",
+           "  /model [id]         show or change the model\n"
+           "  /model save         save the current model as default\n"
+           "  /model <id> save    change model and save as default\n"
+           "  /default [id]       alias for /model save\n"
+           "  /models             list the provider's models\n"
+           "  /tools              toggle tool use (now: %s)\n"
+           "  /web                toggle web search (now: %s)\n"
+           "  /system [text]      show or set the system prompt ('-' removes it)\n"
+           "  /trim <n>           keep only the last n messages\n"
+           "  /paste              compose a multi-line message (end with '.')\n"
+           "  /chats              list the named chats\n"
+           "  /switch <name>      switch to a named chat (creates it if new)\n"
+           "  /rename <name>      name (or rename) the current chat\n"
+           "  /delete <name>      delete a named chat\n"
+           "  /save <file>        save the conversation\n"
+           "  /load <file>        load a conversation\n"
+           "  /new                start a new conversation\n"
+           "  /help               this help\n"
+           "  /quit               quit (also Ctrl-D)\n"
+           "  !cmd                run a shell command (output shown to you)\n"
+           "  !!cmd               run a shell command, add its output to the chat\n",
            tools_on ? "on" : "off", web_on ? "on" : "off");
 }
 
@@ -777,15 +780,80 @@ static int handle_command(repl_state *st, char *line)
                st->web ? "on" : "off", C_RESET);
     } else if (strcmp(cmd, "/model") == 0) {
         if (arg && *arg) {
-            if (strlen(arg) < st->modelcap) {
-                strcpy(st->model, arg);
-                printf("%smodel: %s%s\n", C_DIM, st->model, C_RESET);
+            if (strcmp(arg, "save") == 0) {
+                char serr[256];
+
+                if (config_save_model(st->model, serr, sizeof serr) == 0)
+                    printf("%sdefault model saved: %s%s\n", C_DIM,
+                           st->model, C_RESET);
+                else
+                    fprintf(stderr, "piki: %s\n", serr);
             } else {
-                fputs("piki: model name too long\n",
-                      stderr);
+                char *sp = strrchr(arg, ' ');
+                int do_save = 0;
+                const char *model_arg = arg;
+
+                if (sp && strcmp(sp + 1, "save") == 0) {
+                    /* "model save" -> change and persist */
+                    *sp = '\0';
+                    model_arg = arg;
+                    /* trim trailing spaces from model_arg */
+                    {
+                        size_t ml = strlen(model_arg);
+                        while (ml && model_arg[ml - 1] == ' ')
+                            ml--;
+                        ((char *)model_arg)[ml] = '\0';
+                    }
+                    if (!*model_arg) {
+                        fputs("piki: model name missing\n", stderr);
+                        return 1;
+                    }
+                    do_save = 1;
+                }
+                if (strlen(model_arg) < st->modelcap) {
+                    strcpy(st->model, model_arg);
+                    printf("%smodel: %s%s\n", C_DIM, st->model, C_RESET);
+                    if (do_save) {
+                        char serr[256];
+
+                        if (config_save_model(st->model, serr,
+                                              sizeof serr) == 0)
+                            printf("%sdefault model saved: %s%s\n", C_DIM,
+                                   st->model, C_RESET);
+                        else
+                            fprintf(stderr, "piki: %s\n", serr);
+                    }
+                } else {
+                    fputs("piki: model name too long\n", stderr);
+                }
             }
         } else {
             printf("%scurrent model: %s%s\n", C_DIM, st->model, C_RESET);
+        }
+    } else if (strcmp(cmd, "/default") == 0 ||
+               strcmp(cmd, "/save-model") == 0) {
+        if (arg && *arg) {
+            if (strlen(arg) < st->modelcap) {
+                char serr[256];
+
+                strcpy(st->model, arg);
+                printf("%smodel: %s%s\n", C_DIM, st->model, C_RESET);
+                if (config_save_model(st->model, serr, sizeof serr) == 0)
+                    printf("%sdefault model saved: %s%s\n", C_DIM,
+                           st->model, C_RESET);
+                else
+                    fprintf(stderr, "piki: %s\n", serr);
+            } else {
+                fputs("piki: model name too long\n", stderr);
+            }
+        } else {
+            char serr[256];
+
+            if (config_save_model(st->model, serr, sizeof serr) == 0)
+                printf("%sdefault model saved: %s%s\n", C_DIM,
+                       st->model, C_RESET);
+            else
+                fprintf(stderr, "piki: %s\n", serr);
         }
     } else if (strcmp(cmd, "/models") == 0) {
         buf_t list;
@@ -904,9 +972,9 @@ static void handle_bang(repl_state *st, char *line)
 
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
-    "/model", "/models", "/tools", "/web", "/system", "/trim", "/paste",
-    "/chats", "/switch", "/rename", "/delete", "/save", "/load", "/export",
-    "/new", "/help", "/quit", NULL
+    "/model", "/models", "/default", "/save-model", "/tools", "/web",
+    "/system", "/trim", "/paste", "/chats", "/switch", "/rename", "/delete",
+    "/save", "/load", "/export", "/new", "/help", "/quit", NULL
 };
 
 static void complete_files(const char *prefix, char ***out, size_t *n)

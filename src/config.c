@@ -1,8 +1,11 @@
 #include "config.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "buf.h"
 
@@ -234,4 +237,233 @@ cfg_provider *config_provider(config_t *c, const char *name)
         if (strcmp(c->providers[i].name, name) == 0)
             return &c->providers[i];
     return NULL;
+}
+
+static void config_path_for_save(char *out, size_t cap)
+{
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+
+    if (xdg && *xdg)
+        snprintf(out, cap, "%s/piki/config", xdg);
+    else if (home && *home)
+        snprintf(out, cap, "%s/.config/piki/config", home);
+    else
+        out[0] = '\0';
+}
+
+static int ensure_dir_for_file(const char *path, char *err, size_t errlen)
+{
+    char dir[512];
+    const char *slash = strrchr(path, '/');
+    size_t dlen;
+
+    if (!slash)
+        return 0;
+    dlen = (size_t)(slash - path);
+    if (dlen >= sizeof dir) {
+        if (err && errlen)
+            snprintf(err, errlen, "path too long");
+        return -1;
+    }
+    memcpy(dir, path, dlen);
+    dir[dlen] = '\0';
+
+    /* mkdir -p */
+    {
+        char tmp[512];
+        size_t i;
+
+        if (strlen(dir) >= sizeof tmp) {
+            if (err && errlen)
+                snprintf(err, errlen, "path too long");
+            return -1;
+        }
+        strcpy(tmp, dir);
+        for (i = 1; i < strlen(tmp); i++) {
+            if (tmp[i] == '/') {
+                tmp[i] = '\0';
+                mkdir(tmp, 0700);
+                tmp[i] = '/';
+            }
+        }
+        if (mkdir(tmp, 0700) < 0 && errno != EEXIST) {
+            if (err && errlen)
+                snprintf(err, errlen, "could not create %s: %s", tmp,
+                         strerror(errno));
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int config_save_model(const char *model, char *err, size_t errlen)
+{
+    char path[512];
+    char tmppath[520];
+    FILE *f;
+    buf_t old;
+    buf_t out;
+    const char *p;
+    int in_defaults = 0;
+    int found_defaults = 0;
+    int found_model = 0;
+
+    if (!model || !*model) {
+        if (err && errlen)
+            snprintf(err, errlen, "model is empty");
+        return -1;
+    }
+    if (strlen(model) >= sizeof(((config_t *)0)->model)) {
+        if (err && errlen)
+            snprintf(err, errlen, "model name too long");
+        return -1;
+    }
+
+    config_path_for_save(path, sizeof path);
+    if (!path[0]) {
+        if (err && errlen)
+            snprintf(err, errlen, "no config directory");
+        return -1;
+    }
+    if (ensure_dir_for_file(path, err, errlen) < 0)
+        return -1;
+
+    buf_init(&old);
+    f = fopen(path, "r");
+    if (f) {
+        char tmp[4096];
+        size_t n;
+
+        while ((n = fread(tmp, 1, sizeof tmp, f)) > 0)
+            buf_append(&old, tmp, n);
+        fclose(f);
+    }
+
+    buf_init(&out);
+
+    if (!old.data || !old.len) {
+        buf_printf(&out, "[defaults]\nmodel = %s\n", model);
+        goto write;
+    }
+
+    /* Ensure trailing newline for easier parsing. */
+    if (old.len && old.data[old.len - 1] != '\n')
+        buf_putc(&old, '\n');
+
+    p = old.data;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        char line[512];
+        char copy[512];
+        char *s;
+
+        if (len >= sizeof line) {
+            if (err && errlen)
+                snprintf(err, errlen, "line too long");
+            buf_free(&old);
+            buf_free(&out);
+            return -1;
+        }
+        memcpy(line, p, len);
+        line[len] = '\0';
+        memcpy(copy, line, len + 1);
+        p = nl ? nl + 1 : p + len;
+
+        s = trim(copy);
+        if (*s == '[') {
+            /* If we are leaving [defaults] without having seen model, insert it. */
+            if (in_defaults && !found_model) {
+                buf_printf(&out, "model = %s\n", model);
+                found_model = 1;
+            }
+            /* Determine section type. */
+            {
+                char *rb = strchr(s, ']');
+                int is_defaults = 0;
+
+                if (rb) {
+                    *rb = '\0';
+                    s = trim(s + 1);
+                    if (strcmp(s, "defaults") == 0)
+                        is_defaults = 1;
+                }
+                in_defaults = is_defaults;
+                if (is_defaults)
+                    found_defaults = 1;
+            }
+            buf_append(&out, line, len);
+            buf_putc(&out, '\n');
+            continue;
+        }
+
+        if (in_defaults && *s && *s != '#' && *s != ';') {
+            char *eq = strchr(s, '=');
+            if (eq) {
+                char *key;
+
+                *eq = '\0';
+                key = trim(s);
+                if (strcmp(key, "model") == 0) {
+                    buf_printf(&out, "model = %s\n", model);
+                    found_model = 1;
+                    continue;
+                }
+            }
+        }
+        buf_append(&out, line, len);
+        buf_putc(&out, '\n');
+    }
+
+    if (!found_defaults) {
+        if (out.len && out.data[out.len - 1] != '\n')
+            buf_putc(&out, '\n');
+        buf_printf(&out, "[defaults]\nmodel = %s\n", model);
+    } else if (found_defaults && !found_model) {
+        if (in_defaults) {
+            /* Still inside [defaults] at EOF. */
+            buf_printf(&out, "model = %s\n", model);
+        } else {
+            /* Should have been inserted before next section, but fallback. */
+            buf_printf(&out, "model = %s\n", model);
+        }
+    }
+
+write:
+    buf_free(&old);
+    snprintf(tmppath, sizeof tmppath, "%s.tmp", path);
+    f = fopen(tmppath, "w");
+    if (!f) {
+        if (err && errlen)
+            snprintf(err, errlen, "could not write %s: %s", tmppath,
+                     strerror(errno));
+        buf_free(&out);
+        return -1;
+    }
+    if (out.len && fwrite(out.data, 1, out.len, f) != out.len) {
+        if (err && errlen)
+            snprintf(err, errlen, "write failed: %s", strerror(errno));
+        fclose(f);
+        unlink(tmppath);
+        buf_free(&out);
+        return -1;
+    }
+    if (fclose(f) != 0) {
+        if (err && errlen)
+            snprintf(err, errlen, "write failed: %s", strerror(errno));
+        unlink(tmppath);
+        buf_free(&out);
+        return -1;
+    }
+    if (rename(tmppath, path) != 0) {
+        if (err && errlen)
+            snprintf(err, errlen, "could not save %s: %s", path,
+                     strerror(errno));
+        unlink(tmppath);
+        buf_free(&out);
+        return -1;
+    }
+    buf_free(&out);
+    return 0;
 }
