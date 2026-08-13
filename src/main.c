@@ -122,6 +122,16 @@ static int parse_base_url(const char *url, provider_t *pv)
     return 0;
 }
 
+static int bytes_per_token(const char *model)
+{
+    if (!model) return 4;
+    if (strstr(model, "llama") || strstr(model, "mistral") || strstr(model, "qwen"))
+        return 3;
+    if (strstr(model, "gpt") || strstr(model, "o1") || strstr(model, "o3"))
+        return 3;
+    return 4;
+}
+
 /* --- streaming of a simple turn (no tools) --------------------------- */
 
 /* Lightweight markdown to ANSI (TTY only). Handles **bold**, `code`,
@@ -617,12 +627,12 @@ static void send_user_turn(repl_state *st)
         buf_free(&pc.acc);
     }
 
-    /* Providers that omit usage leave the counts at 0: fall back to the
-     * ~4 bytes/token estimate and flag the session totals as approximate
-     * (the status line then shows them with a leading '~'). */
+    /* Providers that omit usage: fall back to per-model bytes/token
+     * estimate and flag the session totals as approximate. */
     if (got_reply && tu.prompt_tokens == 0 && tu.completion_tokens == 0) {
-        tu.prompt_tokens = (long)(sent_bytes / 4);
-        tu.completion_tokens = (long)(reply_bytes / 4);
+        int bpt = bytes_per_token(st->model);
+        tu.prompt_tokens = (long)(sent_bytes / (size_t)bpt);
+        tu.completion_tokens = (long)(reply_bytes / (size_t)bpt);
         st->usage_est = 1;
     }
     st->sent_total += tu.prompt_tokens;
@@ -1474,9 +1484,9 @@ int main(int argc, char **argv)
     chat_init(&chat);
     /* cap what we KEEP in RAM (matters on 1 GB machines) */
     chat_set_max_bytes(&chat, (size_t)cfg.max_memory * 1024);
-    /* cap what we SEND: no tokenizer, so estimate ~4 bytes per token */
+    /* cap what we SEND: no tokenizer, so estimate per-model bytes per token */
     lim.max_msgs = (size_t)cfg.max_history;
-    lim.max_bytes = (size_t)cfg.max_context_tokens * 4;
+    lim.max_bytes = (size_t)cfg.max_context_tokens * (size_t)bytes_per_token(model);
 
     if (system_prompt)
         chat_set_system(&chat, system_prompt);
