@@ -259,10 +259,12 @@ net_conn *net_connect(const char *host, int port, int use_tls,
             long vr = SSL_get_verify_result(c->ssl);
 
             if (vr != X509_V_OK)
-                seterr(err, errlen, "certificate from %s rejected: %s",
+                seterr(err, errlen, "certificate from %s rejected: %s "
+                       "(try regenerating src/certs.h with tools/mkcerts.sh)",
                        host, X509_verify_cert_error_string(vr));
             else
-                seterr(err, errlen, "TLS handshake with %s failed: %s",
+                seterr(err, errlen, "TLS handshake with %s failed: %s "
+                       "(check network and try tools/mkcerts.sh if root is missing)",
                        host, ssl_reason());
         }
         goto fail;
