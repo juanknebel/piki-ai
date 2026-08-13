@@ -120,18 +120,66 @@ static int parse_base_url(const char *url, provider_t *pv)
 
 /* --- streaming of a simple turn (no tools) --------------------------- */
 
+/* Lightweight markdown to ANSI (TTY only). Handles **bold**, `code`,
+ * ```block``` and *italic* / _italic_ via inline state in print_ctx. */
 typedef struct {
     int last_was_nl;
     int got_any;
     buf_t acc;
+    int md_bold;
+    int md_code;
+    int md_codeblock;
 } print_ctx;
+
+static void md_render(const char *s, size_t n, print_ctx *pc)
+{
+    if (!use_color || !pc) {
+        fwrite(s, 1, n, stdout);
+        return;
+    }
+    for (size_t i = 0; i < n; ) {
+        if (!pc->md_codeblock && i + 2 < n && s[i] == '`' && s[i+1] == '`' && s[i+2] == '`') {
+            fputs(pc->md_codeblock ? C_RESET : C_DIM, stdout);
+            pc->md_codeblock ^= 1;
+            fputs("```", stdout);
+            i += 3;
+            continue;
+        }
+        if (pc->md_codeblock) {
+            fputc(s[i++], stdout);
+            continue;
+        }
+        if (s[i] == '`') {
+            fputs(pc->md_code ? C_RESET : C_DIM, stdout);
+            pc->md_code ^= 1;
+            fputc('`', stdout);
+            i++;
+            continue;
+        }
+        if (i + 1 < n && s[i] == '*' && s[i+1] == '*') {
+            fputs(pc->md_bold ? C_RESET : C_BOLD, stdout);
+            pc->md_bold ^= 1;
+            fputs("**", stdout);
+            i += 2;
+            continue;
+        }
+        if (s[i] == '*' || s[i] == '_') {
+            fputs(C_DIM, stdout);
+            fputc(s[i++], stdout);
+            fputs(C_RESET, stdout);
+            continue;
+        }
+        fputc(s[i++], stdout);
+    }
+}
 
 static int print_delta(const char *text, void *user)
 {
     print_ctx *pc = user;
     size_t n = strlen(text);
 
-    fwrite(text, 1, n, stdout);
+    if (use_color) md_render(text, n, pc);
+    else fwrite(text, 1, n, stdout);
     fflush(stdout);
     buf_puts(&pc->acc, text);
     if (n) {
