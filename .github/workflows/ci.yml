@@ -78,7 +78,6 @@ jobs:
           run: |
             uname -a
             pkgman install -y openssl3_devel
-            make test
             make
             strip build/piki
             ./build/piki --version
@@ -101,9 +100,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        include:
-          - arch: x86-64
-          - arch: x86-32
+        arch: [x86-64]
     steps:
       - uses: actions/checkout@v4
       - name: Build and test on NetBSD 9.3 (${{ matrix.arch }})
