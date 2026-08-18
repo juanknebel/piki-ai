@@ -67,6 +67,13 @@ static void usage(void)
           "\n" PIKI_REPO "\n", stderr);
 }
 
+/* The web-search plugin is an OpenRouter extension; other OpenAI-compatible
+ * providers reject the "plugins" field. */
+static int provider_supports_web(const provider_t *pv)
+{
+    return strstr(pv->host, "openrouter.ai") != NULL;
+}
+
 /* Parses http[s]://host[:port][/base] into pv. 0 ok, -1 invalid. */
 static int parse_base_url(const char *url, provider_t *pv)
 {
@@ -816,9 +823,14 @@ static int handle_command(repl_state *st, char *line)
         printf("%stool use: %s%s\n", C_DIM,
                st->tools_on ? "on" : "off", C_RESET);
     } else if (strcmp(cmd, "/web") == 0) {
-        st->web = !st->web;
-        printf("%sweb search: %s%s\n", C_DIM,
-               st->web ? "on" : "off", C_RESET);
+        if (!st->web && !provider_supports_web(st->pv)) {
+            printf("%sweb search is an OpenRouter plugin; %s does not "
+                   "support it%s\n", C_DIM, st->pv->host, C_RESET);
+        } else {
+            st->web = !st->web;
+            printf("%sweb search: %s%s\n", C_DIM,
+                   st->web ? "on" : "off", C_RESET);
+        }
     } else if (strcmp(cmd, "/model") == 0) {
         if (arg && *arg) {
             if (strcmp(arg, "save") == 0) {
@@ -1547,6 +1559,12 @@ int main(int argc, char **argv)
                     "(config or OPENROUTER_API_KEY)\n", name);
             return 1;
         }
+    }
+
+    if (web && !provider_supports_web(&pv)) {
+        fprintf(stderr, "piki: -w ignored: web search is an OpenRouter "
+                "plugin; %s does not support it\n", pv.host);
+        web = 0;
     }
 
     /* quick health probe for local providers: 1s connect, non-blocking */

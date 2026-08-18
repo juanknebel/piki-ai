@@ -180,6 +180,10 @@ separately by OpenRouter. Equivalent to appending `:online` to the model
 slug (e.g. `-m anthropic/claude-haiku-4.5:online`), which also works without
 the flag.
 
+Web search only exists on OpenRouter: on any other provider `/web` refuses
+to turn on and `-w` is ignored with a warning, instead of sending a
+`plugins` field the server would reject.
+
 ![the web> prompt and the [web] tag](screenshots/06-web.png)
 
 ### REPL commands
