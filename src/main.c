@@ -37,7 +37,6 @@
 #define PIKI_AUTHOR   "Juan Knebel <juanknebel@gmail.com>"
 #define PIKI_REPO     "https://github.com/juanknebel/piki-ai"
 #define DEFAULT_MODEL "anthropic/claude-haiku-4.5"
-#define MAX_AGENT_STEPS 12
 #define HISTORY_MAX 1000
 
 static int use_color;
@@ -252,12 +251,12 @@ static void append_msg_json(buf_t *msgs, int first,
     buf_putc(msgs, '}');
 }
 
-/* Asks y/N on stdin (line). Returns 1 if yes. */
-static int confirm(const char *what)
+/* Reads a y/N answer on stdin (the caller printed the question).
+ * Returns 1 if yes. */
+static int ask_yn(void)
 {
     char resp[16];
 
-    printf("%srun %s? [y/N] %s", C_BOLD, what, C_RESET);
     fflush(stdout);
     if (!fgets(resp, sizeof resp, stdin))
         return 0;
@@ -265,18 +264,29 @@ static int confirm(const char *what)
            resp[0] == 'S';
 }
 
+/* Asks y/N on stdin (line). Returns 1 if yes. */
+static int confirm(const char *what)
+{
+    printf("%srun %s? [y/N] %s", C_BOLD, what, C_RESET);
+    return ask_yn();
+}
+
 /* Runs the agent loop for the last user message already added to chat.
- * Returns 0 ok, -1 error (err), -2 interrupted. Leaves the final response
- * in final (for the history). */
+ * Every max_steps tool rounds it asks whether to keep going; declining is
+ * not an error: the text produced so far is kept as the reply so the next
+ * turn knows what the agent was doing. Returns 0 ok, -1 error (err),
+ * -2 interrupted. Leaves the final response in final (for the history). */
 static int agent_turn(const provider_t *pv, const char *model,
                       const chat_t *chat, send_limits lim, int web,
-                      token_usage *usage, buf_t *final,
+                      long max_steps, token_usage *usage, buf_t *final,
                       char *err, size_t errlen)
 {
     buf_t msgs;
+    buf_t acc;            /* all assistant text, kept if stopped early */
     chat_msg *win;
     size_t wn, i;
-    int step, ret = -1;
+    long step, limit = max_steps;
+    int ret = -1;
     int first = 1;
 
     if (usage) {
@@ -286,11 +296,13 @@ static int agent_turn(const provider_t *pv, const char *model,
 
     /* initial message array from the history window */
     buf_init(&msgs);
+    buf_init(&acc);
     buf_putc(&msgs, '[');
     win = malloc((chat->n + 1) * sizeof *win);
     if (!win) {
         snprintf(err, errlen, "out of memory");
         buf_free(&msgs);
+        buf_free(&acc);
         return -1;
     }
     wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
@@ -300,10 +312,34 @@ static int agent_turn(const provider_t *pv, const char *model,
     }
     free(win);
 
-    for (step = 0; step < MAX_AGENT_STEPS; step++) {
+    for (step = 0; ; step++) {
         api_turn turn;
         size_t j;
         int rc;
+
+        if (step == limit) {
+            printf("%sthe agent has used %ld steps%s\n"
+                   "%scontinue for another %ld? [y/N] %s",
+                   C_DIM, step, C_RESET, C_BOLD, max_steps, C_RESET);
+            if (!ask_yn()) {
+                /* graceful stop: keep what was done as the reply */
+                if (acc.len)
+                    buf_puts(&acc, "\n");
+                buf_puts(&acc, "[agent stopped by the user after ");
+                {
+                    char n[32];
+
+                    snprintf(n, sizeof n, "%ld", step);
+                    buf_puts(&acc, n);
+                }
+                buf_puts(&acc, " steps; the task may be unfinished]");
+                buf_reset(final);
+                buf_append(final, acc.data, acc.len);
+                ret = 0;
+                goto done;
+            }
+            limit += max_steps;
+        }
 
         buf_putc(&msgs, ']');
         {
@@ -326,6 +362,9 @@ static int agent_turn(const provider_t *pv, const char *model,
         if (turn.content.len) {
             printf("%.*s\n", (int)turn.content.len, turn.content.data);
             fflush(stdout);
+            if (acc.len)
+                buf_puts(&acc, "\n");
+            buf_append(&acc, turn.content.data, turn.content.len);
         }
 
         if (turn.ncalls == 0) {
@@ -398,10 +437,10 @@ static int agent_turn(const provider_t *pv, const char *model,
             goto done;
         }
     }
-    snprintf(err, errlen, "the agent exceeded %d steps", MAX_AGENT_STEPS);
 
 done:
     buf_free(&msgs);
+    buf_free(&acc);
     return ret;
 }
 
@@ -440,6 +479,7 @@ typedef struct {
     size_t modelcap;
     chat_t *chat;
     send_limits lim;
+    long max_agent_steps;
     int tools_on;
     int web;
     long sent_total;   /* prompt tokens accumulated this session */
@@ -588,8 +628,8 @@ static void send_user_turn(repl_state *st)
 
         buf_init(&final);
         rc = agent_turn(st->pv, st->model, st->chat,
-                        st->lim, st->web, &tu, &final,
-                        err, sizeof err);
+                        st->lim, st->web, st->max_agent_steps,
+                        &tu, &final, err, sizeof err);
         if (rc == 0) {
             chat_add(st->chat, "assistant", final.data);
             reply_bytes = final.len;
@@ -1568,7 +1608,8 @@ int main(int argc, char **argv)
 
             buf_init(&final);
             rc = agent_turn(&pv, model, &chat, lim, web,
-                            NULL, &final, err, sizeof err);
+                            cfg.max_agent_steps, NULL, &final,
+                            err, sizeof err);
             buf_free(&final);
         } else {
             print_ctx pc;
@@ -1626,6 +1667,7 @@ int main(int argc, char **argv)
         st.modelcap = sizeof model;
         st.chat = &chat;
         st.lim = lim;
+        st.max_agent_steps = cfg.max_agent_steps;
         st.tools_on = tools_on;
         st.web = web;
         st.sent_total = 0;

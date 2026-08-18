@@ -19,6 +19,7 @@
  *   max_history = 40           # messages sent per turn
  *   max_memory = 256           # KB of history kept in RAM
  *   max_context_tokens = 8000  # rough cap on what is sent per turn
+ *   max_agent_steps = 12       # tool-call rounds before asking to continue
  *   check_updates = 1          # 0 disables the daily release check
  *
  * Lines starting with # or ; are comments. Unknown keys and sections
@@ -41,6 +42,7 @@ typedef struct {
     long max_history;         /* messages kept in the sent window */
     long max_memory;          /* KB of history kept in RAM */
     long max_context_tokens;  /* rough cap on what is sent per turn */
+    long max_agent_steps;     /* tool rounds before asking to continue */
     int check_updates;        /* 0 disables the daily release check */
 } config_t;
 

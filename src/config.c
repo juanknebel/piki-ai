@@ -17,6 +17,7 @@ void config_defaults(config_t *c)
     c->max_history = 40;
     c->max_memory = 256;          /* KB */
     c->max_context_tokens = 8000;
+    c->max_agent_steps = 12;
     c->check_updates = 1;
 }
 
@@ -162,6 +163,11 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
                 if (parse_positive(val, &c->max_context_tokens) < 0) {
                     seterr(err, errlen, "invalid max_context_tokens",
                            lineno);
+                    return -1;
+                }
+            } else if (strcmp(key, "max_agent_steps") == 0) {
+                if (parse_positive(val, &c->max_agent_steps) < 0) {
+                    seterr(err, errlen, "invalid max_agent_steps", lineno);
                     return -1;
                 }
             } else if (strcmp(key, "check_updates") == 0) {

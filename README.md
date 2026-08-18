@@ -113,6 +113,7 @@ system = Answer in English.
 max_history = 40           ; messages sent per turn
 max_memory = 256           ; KB of history kept in RAM
 max_context_tokens = 8000  ; rough cap on what is sent per turn
+max_agent_steps = 12       ; tool-call rounds before asking to continue
 check_updates = 1          ; 0 disables the daily release check
 ```
 
@@ -272,6 +273,12 @@ Modify the system, always ask for your `y/N` first:
 Requires a model with function calling support. Note that file contents are
 untrusted input: a repository could contain text trying to steer the model,
 which is why nothing can be written or executed without your confirmation.
+
+An agent turn runs at most `max_agent_steps` tool-call rounds (12 by
+default); on reaching the limit piki asks whether to continue for another
+round. Answering no is not an error: everything the agent said so far is
+kept in the history, so the next message picks up with full context of
+what it was doing.
 
 ## Structure
 
