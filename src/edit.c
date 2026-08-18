@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -230,21 +231,101 @@ int hist_save(const history *h, const char *path, size_t max)
 
 /* --- interactive reading --------------------------------------------- */
 
-/* Redraws prompt + line and repositions the cursor. Reprints the prefix
- * so the column is correct with UTF-8 without counting widths. */
+static size_t term_cols(void)
+{
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+        return ws.ws_col;
+    return 80;
+}
+
+/* Display columns of s[0..n): UTF-8 sequences count as one column and
+ * ANSI CSI sequences (prompt colors) count as zero. */
+static size_t disp_cols(const char *s, size_t n)
+{
+    size_t i = 0, w = 0;
+
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+
+        if (c == 0x1B && i + 1 < n && s[i + 1] == '[') {
+            i += 2;                   /* skip CSI params, then final byte */
+            while (i < n && ((unsigned char)s[i] < 0x40 ||
+                             (unsigned char)s[i] > 0x7E))
+                i++;
+            if (i < n)
+                i++;
+        } else {
+            if (!is_cont(c))
+                w++;
+            i++;
+        }
+    }
+    return w;
+}
+
+/* Screen row (1-based, within the edited block) the cursor was left on by
+ * the last redraw. Lets the next redraw climb back to the first row when
+ * the line wraps across several terminal rows. */
+static size_t redraw_crow = 1;
+
+/* Redraws prompt + line and repositions the cursor, handling lines that
+ * wrap across multiple terminal rows. */
 static void redraw(const char *prompt, editline *e)
 {
     buf_t o;
+    char tmp[32];
+    const char *s = e->buf.data ? e->buf.data : "";
+    size_t cols = term_cols();
+    size_t pw = disp_cols(prompt, strlen(prompt));
+    size_t total = pw + disp_cols(s, e->buf.len);
+    size_t cw = pw + disp_cols(s, e->pos);
+    size_t rows = total / cols + 1;
+    size_t crow = cw / cols + 1;
+    size_t ccol = cw % cols;
 
     buf_init(&o);
-    buf_puts(&o, "\r\033[K");         /* to the start + clear line */
+    if (redraw_crow > 1) {           /* up to the first row of the block */
+        snprintf(tmp, sizeof tmp, "\033[%zuA", redraw_crow - 1);
+        buf_puts(&o, tmp);
+    }
+    buf_puts(&o, "\r\033[J");        /* to the start + clear downward */
     buf_puts(&o, prompt);
     buf_append(&o, e->buf.data, e->buf.len);
-    buf_puts(&o, "\r");              /* back to the start */
-    buf_puts(&o, prompt);
-    buf_append(&o, e->buf.data, e->pos); /* advance up to the cursor */
+    if (total > 0 && total % cols == 0)
+        buf_puts(&o, "\r\n");        /* force the pending wrap */
+    if (rows > crow) {               /* climb from the last row to the cursor */
+        snprintf(tmp, sizeof tmp, "\033[%zuA", rows - crow);
+        buf_puts(&o, tmp);
+    }
+    buf_puts(&o, "\r");
+    if (ccol > 0) {
+        snprintf(tmp, sizeof tmp, "\033[%zuC", ccol);
+        buf_puts(&o, tmp);
+    }
     (void)write(STDOUT_FILENO, o.data, o.len);
     buf_free(&o);
+    redraw_crow = crow;
+}
+
+/* Drops the cursor onto the last row of the edited block, so a final
+ * "\r\n" (Enter, Ctrl-C) does not land mid-block. */
+static void goto_last_row(const char *prompt, editline *e)
+{
+    const char *s = e->buf.data ? e->buf.data : "";
+    size_t cols = term_cols();
+    size_t total = disp_cols(prompt, strlen(prompt)) +
+                   disp_cols(s, e->buf.len);
+    size_t rows = total / cols + 1;
+
+    if (rows > redraw_crow) {
+        char tmp[32];
+
+        snprintf(tmp, sizeof tmp, "\033[%zuB", rows - redraw_crow);
+        (void)write(STDOUT_FILENO, tmp, strlen(tmp));
+    }
+    redraw_crow = 1;
 }
 
 /* On Tab: complete the whole line against comp's candidates. Single match
@@ -279,6 +360,7 @@ static void do_complete(const char *prompt, editline *e,
             (void)write(STDOUT_FILENO, "  ", 2);
         }
         (void)write(STDOUT_FILENO, "\r\n", 2);
+        redraw_crow = 1;             /* the block starts on a fresh row */
         if (lcp > e->buf.len) {
             char *tmp = malloc(lcp + 1);
 
@@ -318,6 +400,7 @@ int edit_readline(const char *prompt, buf_t *out, history *h,
     el_init(&e);
     buf_init(&saved);
     hpos = h ? h->n : 0;
+    redraw_crow = 1;
     redraw(prompt, &e);
 
     for (;;) {
@@ -332,10 +415,12 @@ int edit_readline(const char *prompt, buf_t *out, history *h,
         }
 
         if (c == '\r' || c == '\n') {
+            goto_last_row(prompt, &e);
             (void)write(STDOUT_FILENO, "\r\n", 2);
             ret = 1;
             break;
         } else if (c == 3) {          /* Ctrl-C */
+            goto_last_row(prompt, &e);
             (void)write(STDOUT_FILENO, "\r\n", 2);
             ret = -1;
             break;
