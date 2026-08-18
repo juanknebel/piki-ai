@@ -74,6 +74,118 @@ static void set_http_error(int status, const char *body,
     json_doc_free(doc);
 }
 
+/* --- connection reuse -------------------------------------------------- */
+
+/* One cached keep-alive connection for the active provider: on old
+ * hardware the TLS handshake is the most expensive part of a turn. */
+static net_conn *cc_conn;
+static char cc_host[256];
+static int cc_port, cc_tls;
+
+void api_conn_close(void)
+{
+    if (cc_conn) {
+        net_close(cc_conn);
+        cc_conn = NULL;
+    }
+}
+
+/* Keeps c for the next request iff the response left it clean;
+ * otherwise closes it. */
+static void api_conn_put(const provider_t *pv, net_conn *c,
+                         const http_resp *r)
+{
+    if (!http_resp_reusable(r) ||
+        strlen(pv->host) >= sizeof cc_host) {
+        net_close(c);
+        return;
+    }
+    api_conn_close();
+    snprintf(cc_host, sizeof cc_host, "%s", pv->host);
+    cc_port = pv->port;
+    cc_tls = pv->use_tls;
+    cc_conn = c;
+}
+
+/* Connects (or reuses the cached connection), sends one request (POST
+ * when body is set, GET otherwise) and reads the response headers into
+ * r. On success *out_c is the live connection. 0 ok, -1 error (err),
+ * -2 interrupted.
+ *
+ * Retry policy: a request is re-sent ONCE, on a fresh connection, only
+ * when the REUSED connection failed at write time or the server closed
+ * it before sending a single response byte -- the keep-alive race where
+ * nothing was consumed, so the retry cannot duplicate a reply or a
+ * charge (RFC 9112 9.4). A fresh connection is never retried here (the
+ * connect itself already retries in net_connect), and neither is any
+ * failure after the first response byte. */
+static int api_send(const provider_t *pv, const char *path,
+                    const char *body, size_t bodylen, int timeout_s,
+                    net_conn **out_c, http_resp *r,
+                    char *err, size_t errlen)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < 2; attempt++) {
+        net_conn *c;
+        int rc, reused = 0;
+
+        if (cc_conn && strcmp(cc_host, pv->host) == 0 &&
+            cc_port == pv->port && cc_tls == pv->use_tls) {
+            c = cc_conn;
+            cc_conn = NULL;
+            reused = 1;
+        } else {
+            api_conn_close();   /* provider changed: drop the old one */
+            c = net_connect(pv->host, pv->port, pv->use_tls,
+                            err, errlen);
+            if (!c)
+                return -1;
+        }
+        /* read timeout is per-connection state: always reset it */
+        net_set_read_timeout(c, timeout_s);
+
+        rc = body ? http_post(c, pv->host, path, pv->api_key,
+                              body, bodylen, 1)
+                  : http_get(c, pv->host, path, pv->api_key, 1);
+        if (rc == NET_EINTR) {
+            net_close(c);
+            return -2;
+        }
+        if (rc < 0) {
+            net_close(c);
+            if (reused)
+                continue;   /* stale keep-alive: once more, fresh */
+            snprintf(err, errlen, "network error sending the request");
+            return -1;
+        }
+
+        rc = http_read_response(c, r, err, errlen);
+        if (rc == NET_EINTR) {
+            net_close(c);
+            return -2;
+        }
+        if (rc == HTTP_EARLY_EOF) {
+            net_close(c);
+            if (reused)
+                continue;   /* idle-close race: once more, fresh */
+            snprintf(err, errlen,
+                     "the server closed the connection "
+                     "without responding");
+            return -1;
+        }
+        if (rc < 0) {
+            net_close(c);
+            return -1;
+        }
+        *out_c = c;
+        return 0;
+    }
+    /* unreachable: the second attempt never uses a reused connection */
+    snprintf(err, errlen, "network error sending the request");
+    return -1;
+}
+
 int api_chat(const provider_t *pv, const char *model,
              const chat_msg *msgs, size_t nmsgs,
              buf_t *out, char *err, size_t errlen)
@@ -90,23 +202,9 @@ int api_chat(const provider_t *pv, const char *model,
     build_body(&body, model, msgs, nmsgs, 0, 0);
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
-    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
-    if (!c)
-        goto done;
-
-    rc = http_post(c, pv->host, path.data, pv->api_key,
-                   body.data, body.len);
-    if (rc == NET_EINTR) {
-        ret = -2;
-        goto done;
-    }
-    if (rc < 0) {
-        snprintf(err, errlen, "network error sending the request");
-        goto done;
-    }
-
-    rc = http_read_response(c, &r, err, errlen);
-    if (rc == NET_EINTR) {
+    rc = api_send(pv, path.data, body.data, body.len, 0, &c, &r,
+                  err, errlen);
+    if (rc == -2) {
         ret = -2;
         goto done;
     }
@@ -122,6 +220,8 @@ int api_chat(const provider_t *pv, const char *model,
         snprintf(err, errlen, "network error reading the response");
         goto done;
     }
+    api_conn_put(pv, c, &r);
+    c = NULL;
 
     if (r.meta.status != 200) {
         set_http_error(r.meta.status, resp.data ? resp.data : "",
@@ -282,22 +382,9 @@ int api_responses_turn(const provider_t *pv, const char *model,
     build_responses_body(&body, model, msgs, nmsgs);
     buf_printf(&path, "%s/responses", pv->base_path);
 
-    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
-    if (!c)
-        goto done;
-
-    rc = http_post(c, pv->host, path.data, pv->api_key,
-                   body.data, body.len);
-    if (rc == NET_EINTR) {
-        ret = -2;
-        goto done;
-    }
-    if (rc < 0) {
-        snprintf(err, errlen, "network error sending the request");
-        goto done;
-    }
-    rc = http_read_response(c, &r, err, errlen);
-    if (rc == NET_EINTR) {
+    rc = api_send(pv, path.data, body.data, body.len, 0, &c, &r,
+                  err, errlen);
+    if (rc == -2) {
         ret = -2;
         goto done;
     }
@@ -312,6 +399,8 @@ int api_responses_turn(const provider_t *pv, const char *model,
         snprintf(err, errlen, "network error reading the response");
         goto done;
     }
+    api_conn_put(pv, c, &r);
+    c = NULL;
     if (r.meta.status != 200) {
         set_http_error(r.meta.status, resp.data ? resp.data : "",
                        err, errlen);
@@ -342,21 +431,8 @@ int api_models(const provider_t *pv, buf_t *out,
     buf_init(&resp);
     buf_printf(&path, "%s/models", pv->base_path);
 
-    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
-    if (!c)
-        goto done;
-
-    rc = http_get(c, pv->host, path.data, pv->api_key);
-    if (rc == NET_EINTR) {
-        ret = -2;
-        goto done;
-    }
-    if (rc < 0) {
-        snprintf(err, errlen, "network error sending the request");
-        goto done;
-    }
-    rc = http_read_response(c, &r, err, errlen);
-    if (rc == NET_EINTR) {
+    rc = api_send(pv, path.data, NULL, 0, 0, &c, &r, err, errlen);
+    if (rc == -2) {
         ret = -2;
         goto done;
     }
@@ -371,6 +447,8 @@ int api_models(const provider_t *pv, buf_t *out,
         snprintf(err, errlen, "network error reading the response");
         goto done;
     }
+    api_conn_put(pv, c, &r);
+    c = NULL;
     if (r.meta.status != 200) {
         set_http_error(r.meta.status, resp.data ? resp.data : "",
                        err, errlen);
@@ -426,7 +504,7 @@ int api_latest_version(const char *owner_repo, char *out, size_t cap,
     if (!c)
         goto done;
 
-    rc = http_get(c, "api.github.com", path.data, NULL);
+    rc = http_get(c, "api.github.com", path.data, NULL, 0);
     if (rc == NET_EINTR) {
         ret = -2;
         goto done;
@@ -440,8 +518,12 @@ int api_latest_version(const char *owner_repo, char *out, size_t cap,
         ret = -2;
         goto done;
     }
-    if (rc < 0)
+    if (rc < 0) {
+        if (rc == HTTP_EARLY_EOF)
+            snprintf(err, errlen, "the server closed the connection "
+                     "without responding");
         goto done;
+    }
     rc = http_read_all(&r, &resp);
     if (rc == NET_EINTR) {
         ret = -2;
@@ -555,18 +637,9 @@ int api_agent_turn(const provider_t *pv, const char *model,
     buf_putc(&body, '}');
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
-    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
-    if (!c)
-        goto done;
-    rc = http_post(c, pv->host, path.data, pv->api_key,
-                   body.data, body.len);
-    if (rc == NET_EINTR) { ret = -2; goto done; }
-    if (rc < 0) {
-        snprintf(err, errlen, "network error sending the request");
-        goto done;
-    }
-    rc = http_read_response(c, &r, err, errlen);
-    if (rc == NET_EINTR) { ret = -2; goto done; }
+    rc = api_send(pv, path.data, body.data, body.len, 0, &c, &r,
+                  err, errlen);
+    if (rc == -2) { ret = -2; goto done; }
     if (rc < 0)
         goto done;
     rc = http_read_all(&r, &resp);
@@ -575,6 +648,8 @@ int api_agent_turn(const provider_t *pv, const char *model,
         snprintf(err, errlen, "network error reading the response");
         goto done;
     }
+    api_conn_put(pv, c, &r);
+    c = NULL;
     if (r.meta.status != 200) {
         set_http_error(r.meta.status, resp.data ? resp.data : "",
                        err, errlen);
@@ -708,25 +783,11 @@ int api_chat_stream(const provider_t *pv, const char *model,
     build_body(&body, model, msgs, nmsgs, 1, web);
     buf_printf(&path, "%s/chat/completions", pv->base_path);
 
-    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
-    if (!c)
-        goto done;
-    /* if the server stops sending tokens for 120 s, we cut off */
-    net_set_read_timeout(c, 120);
-
-    rc = http_post(c, pv->host, path.data, pv->api_key,
-                   body.data, body.len);
-    if (rc == NET_EINTR) {
-        ret = -2;
-        goto done;
-    }
-    if (rc < 0) {
-        snprintf(err, errlen, "network error sending the request");
-        goto done;
-    }
-
-    rc = http_read_response(c, &r, err, errlen);
-    if (rc == NET_EINTR) {
+    /* the 120 s inactivity timeout cuts off a server that stops
+     * sending tokens mid-stream */
+    rc = api_send(pv, path.data, body.data, body.len, 120, &c, &r,
+                  err, errlen);
+    if (rc == -2) {
         ret = -2;
         goto done;
     }
@@ -775,6 +836,10 @@ int api_chat_stream(const provider_t *pv, const char *model,
     }
     if (sc.got_error)
         goto done; /* err already set by on_event */
+    /* only a stream read to the end leaves the connection clean; a cut
+     * (Ctrl-C, error) still has bytes in flight and is closed instead */
+    api_conn_put(pv, c, &r);
+    c = NULL;
     ret = 0;
 
 done:

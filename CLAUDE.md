@@ -81,7 +81,22 @@ completion lives in `main.c` behind `el_completer`.
 - **Only the connect is retried** (3 attempts, 1 s/2 s backoff): at that
   point nothing has been sent, so a retry cannot duplicate a request or a
   charge. TLS/certificate failures are never retried (not transient), and
-  mid-stream failures are reported, not retried.
+  mid-stream failures are reported, not retried. One extension, same
+  spirit: `api_send` (api.c) re-sends a request ONCE, on a fresh
+  connection, only when a REUSED keep-alive connection failed at write
+  time or the server closed it before sending a single response byte —
+  the idle-close race (RFC 9112 9.4) where nothing of a response was
+  consumed, so the retry still cannot duplicate a reply or a charge. Any
+  failure after the first response byte is reported, never retried.
+- **The TLS connection is reused between turns** (one cached conn in
+  api.c, keyed by host/port/tls; the SSL_CTX with the parsed roots is
+  per-process in net.c): on the target i686 hardware the handshake is
+  the most expensive part of a turn. Reuse is gated by
+  `http_resp_reusable` — body fully read with real framing (chunked or
+  Content-Length), no surplus bytes, no `Connection: close` — so "when
+  in doubt, close" is the failure mode. A stream cut early (Ctrl-C,
+  error) always closes. The update check runs in its own process and
+  never touches the cache.
 - **Two distinct history limits, do not conflate them.** `chat_t.max_bytes`
   (config `max_memory`, KB) caps what is KEPT in RAM — the oldest messages
   are evicted and freed, which is what keeps a long session off swap on a

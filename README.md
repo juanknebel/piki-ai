@@ -16,6 +16,8 @@ Talks to any OpenAI-compatible API endpoint: OpenRouter (by default),
   certificate store has grown old.
 - Streaming responses token by token; `Ctrl-C` cancels without closing the
   program.
+- The TLS connection is kept alive and reused between turns, so on slow
+  hardware only the first message of a session pays for the handshake.
 - Server-side web search (`/web`) on OpenRouter and Meta Model API, with
   the sources cited under each answer.
 - Line editor with history and multi-line aware editing, tool use enabled

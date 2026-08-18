@@ -70,6 +70,26 @@ int main(void)
         "Content-Length: 99\r\n", &m) == 0);
     CHECK(m.content_length == -1);
 
+    /* Connection header, case-insensitive */
+    CHECK(http_parse_meta(
+        "HTTP/1.1 200 OK\r\n"
+        "Connection: close\r\n"
+        "\r\n", &m) == 0);
+    CHECK(m.conn_close);
+    CHECK(http_parse_meta(
+        "HTTP/1.1 200 OK\r\n"
+        "connection: CLOSE\r\n"
+        "\r\n", &m) == 0);
+    CHECK(m.conn_close);
+    CHECK(http_parse_meta(
+        "HTTP/1.1 200 OK\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n", &m) == 0);
+    CHECK(!m.conn_close);
+    CHECK(http_parse_meta(
+        "HTTP/1.1 200 OK\r\n\r\n", &m) == 0);
+    CHECK(!m.conn_close);
+
     CHECK(http_parse_meta("FTP/1.1 200 OK\r\n\r\n", &m) < 0);
     CHECK(http_parse_meta("HTTP/1.1 999 X\r\n\r\n", &m) < 0);
     CHECK(http_parse_meta("HTTP/1.1\r\n\r\n", &m) < 0);
@@ -121,6 +141,52 @@ int main(void)
         used = chunk_feed(&d, "EXTRA", 5, &out);
         CHECK(used == 0 && out.len == 0);
         buf_free(&out);
+    }
+
+    /* --- connection reuse predicate --- */
+    {
+        http_resp r;
+
+        /* chunked body read to the end: reusable */
+        memset(&r, 0, sizeof r);
+        r.body_done = 1;
+        r.meta.chunked = 1;
+        r.meta.content_length = -1;
+        CHECK(http_resp_reusable(&r));
+
+        /* Content-Length body read to the end: reusable */
+        memset(&r, 0, sizeof r);
+        r.body_done = 1;
+        r.meta.content_length = 42;
+        CHECK(http_resp_reusable(&r));
+
+        /* identity-until-EOF framing: never reusable */
+        memset(&r, 0, sizeof r);
+        r.body_done = 1;
+        r.meta.content_length = -1;
+        CHECK(!http_resp_reusable(&r));
+
+        /* body not fully read */
+        memset(&r, 0, sizeof r);
+        r.meta.chunked = 1;
+        r.meta.content_length = -1;
+        CHECK(!http_resp_reusable(&r));
+
+        /* unconsumed surplus bytes poison the connection */
+        memset(&r, 0, sizeof r);
+        r.body_done = 1;
+        r.meta.chunked = 1;
+        r.meta.content_length = -1;
+        r.rlen = 5;
+        r.rpos = 0;
+        CHECK(!http_resp_reusable(&r));
+
+        /* the server said Connection: close */
+        memset(&r, 0, sizeof r);
+        r.body_done = 1;
+        r.meta.content_length = 42;
+        r.meta.conn_close = 1;
+        CHECK(!http_resp_reusable(&r));
     }
 
     if (fails) {

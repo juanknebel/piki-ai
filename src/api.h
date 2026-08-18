@@ -40,6 +40,11 @@ typedef struct {
     long completion_tokens;
 } token_usage;
 
+/* Closes the cached keep-alive connection (call before exiting, or to
+ * force a fresh connection). The api calls open and cache it on their
+ * own; this only needs to be called to tear it down cleanly. */
+void api_conn_close(void);
+
 /* Non-streaming chat: sends the conversation and appends the model's
  * response to out. 0 ok, -1 error (description in err), -2 interrupted. */
 int api_chat(const provider_t *pv, const char *model,

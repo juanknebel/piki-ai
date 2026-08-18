@@ -1941,6 +1941,7 @@ int main(int argc, char **argv)
             buf_free(&pc.acc);
         }
         chat_free(&chat);
+        api_conn_close();
         if (rc == -2) {
             fputs("piki: interrupted\n", stderr);
             return 130;
@@ -2008,5 +2009,6 @@ int main(int argc, char **argv)
         hist_free(&h);
     }
     chat_free(&chat);
+    api_conn_close();   /* clean TLS shutdown of the kept connection */
     return 0;
 }

@@ -12,12 +12,12 @@
 
 /* --- header parsing ------------------------------------------------- */
 
-static int value_has_chunked(const char *v, size_t vlen)
+static int value_has(const char *v, size_t vlen, const char *tok)
 {
-    size_t i;
+    size_t tlen = strlen(tok), i;
 
-    for (i = 0; i + 7 <= vlen; i++)
-        if (strncasecmp(v + i, "chunked", 7) == 0)
+    for (i = 0; i + tlen <= vlen; i++)
+        if (strncasecmp(v + i, tok, tlen) == 0)
             return 1;
     return 0;
 }
@@ -29,6 +29,7 @@ int http_parse_meta(const char *hdr, http_meta *m)
     m->status = 0;
     m->content_length = -1;
     m->chunked = 0;
+    m->conn_close = 0;
 
     if (strncmp(hdr, "HTTP/1.", 7) != 0)
         return -1;
@@ -64,8 +65,12 @@ int http_parse_meta(const char *hdr, http_meta *m)
                 m->content_length = atol(v);
             else if (nlen == 17 &&
                      strncasecmp(p, "Transfer-Encoding", 17) == 0 &&
-                     value_has_chunked(v, (size_t)(p + len - v)))
+                     value_has(v, (size_t)(p + len - v), "chunked"))
                 m->chunked = 1;
+            else if (nlen == 10 &&
+                     strncasecmp(p, "Connection", 10) == 0 &&
+                     value_has(v, (size_t)(p + len - v), "close"))
+                m->conn_close = 1;
         }
         p = nl;
     }
@@ -177,7 +182,7 @@ ssize_t chunk_feed(chunk_dec *d, const char *in, size_t n, buf_t *out)
 
 static int send_request(net_conn *c, const char *method, const char *host,
                         const char *path, const char *bearer,
-                        const char *body, size_t bodylen)
+                        const char *body, size_t bodylen, int keep_alive)
 {
     buf_t req;
     ssize_t rc;
@@ -196,7 +201,8 @@ static int send_request(net_conn *c, const char *method, const char *host,
         buf_printf(&req, "Content-Length: %lu\r\n",
                    (unsigned long)bodylen);
     }
-    buf_puts(&req, "Connection: close\r\n\r\n");
+    buf_printf(&req, "Connection: %s\r\n\r\n",
+               keep_alive ? "keep-alive" : "close");
     if (body)
         buf_append(&req, body, bodylen);
 
@@ -208,15 +214,17 @@ static int send_request(net_conn *c, const char *method, const char *host,
 }
 
 int http_post(net_conn *c, const char *host, const char *path,
-              const char *bearer, const char *body, size_t bodylen)
+              const char *bearer, const char *body, size_t bodylen,
+              int keep_alive)
 {
-    return send_request(c, "POST", host, path, bearer, body, bodylen);
+    return send_request(c, "POST", host, path, bearer, body, bodylen,
+                        keep_alive);
 }
 
 int http_get(net_conn *c, const char *host, const char *path,
-             const char *bearer)
+             const char *bearer, int keep_alive)
 {
-    return send_request(c, "GET", host, path, bearer, NULL, 0);
+    return send_request(c, "GET", host, path, bearer, NULL, 0, keep_alive);
 }
 
 /* --- response ----------------------------------------------------------- */
@@ -252,6 +260,11 @@ int http_read_response(net_conn *c, http_resp *r, char *err, size_t errlen)
         }
         rc = net_read(c, tmp, sizeof tmp);
         if (rc == NET_EOF) {
+            if (hdr.len == 0) {
+                /* not one byte came: safe-to-retry on a reused conn */
+                buf_free(&hdr);
+                return HTTP_EARLY_EOF;
+            }
             seterr(err, errlen,
                    "the server closed the connection without responding");
             goto fail;
@@ -353,6 +366,14 @@ ssize_t http_read_body(http_resp *r, buf_t *out)
             return (ssize_t)avail;
         }
     }
+}
+
+int http_resp_reusable(const http_resp *r)
+{
+    return r->body_done &&
+           (r->meta.chunked || r->meta.content_length >= 0) &&
+           r->rpos == r->rlen &&
+           !r->meta.conn_close;
 }
 
 int http_read_all(http_resp *r, buf_t *out)
