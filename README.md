@@ -154,12 +154,24 @@ piki -m openai/gpt-4o-mini "hi"
 piki -p ollama -m llama3.2 "hi"
 piki -t "list the .c files in the current directory"   # with tool use
 
+# piped stdin becomes the question, or extra context after it:
+dmesg | tail -20 | piki "what does this error mean?"
+piki "summarize" < notes.txt
+echo "capital of France?" | piki
+
 # local model on another machine on the LAN:
 PIKI_BASE_URL=http://192.168.1.10:11434/v1 piki -m llama3.2 "hi"
 ```
 
 Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use in
 one-shot mode), `-w` (web search), `--resume`, `--version`, `--help`.
+
+When stdin is a pipe or a redirect, piki always runs in one-shot mode:
+with an argv question the piped content is appended after it (a blank
+line in between); without one the piped content is the question itself.
+Input is capped at 1 MB (a warning notes the truncation). Note this
+means `piki < file` no longer opens the REPL — run `piki` on a terminal
+for that.
 
 ### Sessions
 

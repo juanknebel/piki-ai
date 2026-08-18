@@ -58,6 +58,8 @@ static void usage(void)
           "[-t] [-w] [--resume] [\"question\"]\n"
           "     with no question it enters interactive mode (/help for "
           "commands)\n"
+          "     piped stdin is sent as the question, or appended to it\n"
+          "        as context: cmd | piki, piki \"explain\" < file\n"
           "     -t enables tool use for a one-shot question (in the REPL\n"
           "        tools are on by default; /tools toggles them)\n"
           "     -w enables OpenRouter web search\n"
@@ -1592,6 +1594,25 @@ static void ensure_config_dir(void)
     mkdir(path, 0700);
 }
 
+/* Slurps piped stdin up to cap bytes (truncates with a warning past
+ * that; the send window truncates further anyway). -1 on read error. */
+static int read_stdin_all(buf_t *out, size_t cap)
+{
+    char tmp[8192];
+    size_t n;
+
+    while ((n = fread(tmp, 1, sizeof tmp, stdin)) > 0) {
+        if (out->len + n >= cap) {
+            buf_append(out, tmp, cap - out->len);
+            fprintf(stderr, "piki: stdin truncated to %lu KB\n",
+                    (unsigned long)(cap / 1024));
+            break;
+        }
+        buf_append(out, tmp, n);
+    }
+    return ferror(stdin) ? -1 : 0;
+}
+
 int main(int argc, char **argv)
 {
     static char model[128] = "";
@@ -1605,6 +1626,7 @@ int main(int argc, char **argv)
     config_t cfg;
     provider_t pv;
     chat_t chat;
+    buf_t pipe_in;
     send_limits lim;
     struct sigaction sa;
     char err[512];
@@ -1647,6 +1669,34 @@ int main(int argc, char **argv)
     else if (i != argc) {
         usage();
         return 2;
+    }
+
+    /* Piped stdin is one-shot input: alone it IS the question; with an
+     * argv question it is appended as context ("explain this" < log). */
+    buf_init(&pipe_in);
+    if (!isatty(STDIN_FILENO)) {
+        if (read_stdin_all(&pipe_in, 1024 * 1024) < 0) {
+            fputs("piki: error reading stdin\n", stderr);
+            return 1;
+        }
+        while (pipe_in.len && pipe_in.data[pipe_in.len - 1] == '\n')
+            pipe_in.data[--pipe_in.len] = '\0';
+        if (pipe_in.len && question) {
+            buf_t q;
+
+            buf_init(&q);
+            buf_puts(&q, question);
+            buf_puts(&q, "\n\n");
+            buf_append(&q, pipe_in.data, pipe_in.len);
+            buf_free(&pipe_in);
+            pipe_in = q;
+        }
+        if (pipe_in.len)
+            question = pipe_in.data;
+        else if (!question) {
+            usage();
+            return 2;
+        }
     }
 
     use_color = term_is_tty();
@@ -1784,6 +1834,7 @@ int main(int argc, char **argv)
         if (tools_on < 0)
             tools_on = 0;
         chat_add(&chat, "user", question);
+        buf_free(&pipe_in);   /* chat_add copied it */
         if (web && pv.web_kind == API_WEB_RESPONSES) {
             buf_t final;
 
