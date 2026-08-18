@@ -109,6 +109,53 @@ void chat_trim(chat_t *c, size_t keep)
         evict_oldest(c);
 }
 
+void chat_compact_apply(chat_t *c, const char *summary, size_t keep_last)
+{
+    static const char prefix[] = "[Summary of the earlier conversation]\n";
+    size_t start, i, plen, slen;
+    char *content;
+
+    if (c->n <= keep_last)
+        return;
+    start = c->n - keep_last;
+    /* the kept tail must start with a user message: leading assistant
+     * (or other) messages fold into the summarized region */
+    while (start < c->n && strcmp(c->msgs[start].role, "user") != 0)
+        start++;
+
+    for (i = 0; i < start; i++)
+        free((char *)c->msgs[i].content);
+    memmove(c->msgs, c->msgs + start, (c->n - start) * sizeof *c->msgs);
+    c->n -= start;
+
+    plen = sizeof prefix - 1;
+    slen = strlen(summary);
+    content = malloc(plen + slen + 1);
+    if (!content)
+        die_oom();
+    memcpy(content, prefix, plen);
+    memcpy(content + plen, summary, slen + 1);
+
+    if (c->n == c->cap) {
+        size_t nc = c->cap ? c->cap * 2 : 16;
+        chat_msg *nm = realloc(c->msgs, nc * sizeof *nm);
+
+        if (!nm)
+            die_oom();
+        c->msgs = nm;
+        c->cap = nc;
+    }
+    memmove(c->msgs + 1, c->msgs, c->n * sizeof *c->msgs);
+    c->msgs[0].role = "user";
+    c->msgs[0].content = content;
+    c->n++;
+
+    c->bytes = 0;
+    for (i = 0; i < c->n; i++)
+        c->bytes += strlen(c->msgs[i].content);
+    enforce_cap(c);
+}
+
 size_t chat_window(const chat_t *c, size_t max_msgs, size_t max_bytes,
                    chat_msg *out, size_t outcap)
 {

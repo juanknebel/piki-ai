@@ -178,6 +178,83 @@ int main(void)
         chat_free(&c);
     }
 
+    /* --- compact: summary replaces everything before the kept tail --- */
+    {
+        size_t i, want;
+
+        chat_init(&c);
+        chat_set_system(&c, "sys");
+        for (i = 0; i < 5; i++) {
+            chat_add(&c, "user", "question");
+            chat_add(&c, "assistant", "answer");
+        }
+        chat_compact_apply(&c, "the summary", 4);
+        CHECK(c.n == 5);
+        CHECK(strcmp(c.msgs[0].role, "user") == 0);
+        CHECK(strcmp(c.msgs[0].content,
+                     "[Summary of the earlier conversation]\n"
+                     "the summary") == 0);
+        CHECK(strcmp(c.msgs[1].role, "user") == 0);
+        CHECK(strcmp(c.msgs[4].content, "answer") == 0);
+        CHECK(c.system && strcmp(c.system, "sys") == 0);
+        want = 0;
+        for (i = 0; i < c.n; i++)
+            want += strlen(c.msgs[i].content);
+        CHECK(c.bytes == want);
+        chat_free(&c);
+    }
+
+    /* --- compact: no-op when there is nothing older than the tail --- */
+    {
+        chat_init(&c);
+        chat_add(&c, "user", "q");
+        chat_add(&c, "assistant", "a");
+        chat_compact_apply(&c, "s", 4);
+        CHECK(c.n == 2 && strcmp(c.msgs[0].content, "q") == 0);
+        chat_free(&c);
+    }
+
+    /* --- compact: tail is shrunk until it starts with a user message --- */
+    {
+        chat_init(&c);
+        chat_add(&c, "user", "q1");
+        chat_add(&c, "assistant", "a1");
+        chat_add(&c, "user", "q2");
+        chat_add(&c, "assistant", "a2");
+        chat_compact_apply(&c, "s", 3);   /* tail would start at a1 */
+        CHECK(c.n == 3);
+        CHECK(strcmp(c.msgs[1].content, "q2") == 0);
+        CHECK(strcmp(c.msgs[2].content, "a2") == 0);
+        chat_free(&c);
+    }
+
+    /* --- compact: a tail with no user message leaves just the summary --- */
+    {
+        chat_init(&c);
+        chat_add(&c, "user", "q1");
+        chat_add(&c, "assistant", "a1");
+        chat_add(&c, "assistant", "a2");
+        chat_compact_apply(&c, "s", 2);
+        CHECK(c.n == 1);
+        CHECK(strcmp(c.msgs[0].role, "user") == 0);
+        chat_free(&c);
+    }
+
+    /* --- compact: max_bytes still enforced, newest never evicted --- */
+    {
+        chat_init(&c);
+        chat_set_max_bytes(&c, 20);
+        chat_add(&c, "user", "aaaaaaaa");
+        chat_add(&c, "assistant", "bbbbbbbb");
+        chat_add(&c, "user", "cccc");
+        chat_compact_apply(&c,
+                           "a very long summary that blows past the cap",
+                           1);
+        CHECK(c.n == 1);   /* oversized summary evicted, newest kept */
+        CHECK(strcmp(c.msgs[0].content, "cccc") == 0);
+        chat_free(&c);
+    }
+
     if (fails) {
         fprintf(stderr, "test_chat: %d failures\n", fails);
         return 1;

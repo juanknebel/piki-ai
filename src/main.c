@@ -543,6 +543,7 @@ static void repl_help(int tools_on, int web_on)
            "  /web                toggle web search (now: %s)\n"
            "  /system [text]      show or set the system prompt ('-' removes it)\n"
            "  /trim <n>           keep only the last n messages\n"
+           "  /compact            summarize old history to shrink the context\n"
            "  /retry              regenerate the last reply\n"
            "  /undo               drop the last exchange\n"
            "  /copy               copy the last reply to the clipboard\n"
@@ -866,6 +867,53 @@ static int handle_command(repl_state *st, char *line)
         } else {
             chat_pop(c);   /* drop the reply, keep the user message */
             send_user_turn(st);
+        }
+    } else if (strcmp(cmd, "/compact") == 0) {
+        /* Asks the model for a summary of the history and replaces
+         * everything but the last few messages with it: keeps the thread
+         * while cutting the bytes kept in RAM and sent per turn. */
+        chat_t *c = st->chat;
+
+        if (c->n <= 4) {
+            printf("%snothing to compact%s\n", C_DIM, C_RESET);
+        } else {
+            size_t before = c->bytes, wn;
+            chat_msg *win;
+            buf_t summary;
+
+            win = malloc((c->n + 2) * sizeof *win);
+            if (!win) {
+                fputs("piki: out of memory\n", stderr);
+                return 1;
+            }
+            wn = chat_window(c, st->lim.max_msgs, st->lim.max_bytes,
+                             win, c->n + 1);
+            win[wn].role = "user";
+            win[wn].content = "Summarize the conversation above "
+                              "compactly: decisions, facts, open "
+                              "questions. Plain text, no preamble.";
+            wn++;
+            printf("%s[compacting...]%s\n", C_DIM, C_RESET);
+            fflush(stdout);
+            buf_init(&summary);
+            rc = api_chat(st->pv, st->model, win, wn, &summary,
+                          err, sizeof err);
+            if (rc == 0) {
+                chat_compact_apply(c, summary.data ? summary.data : "",
+                                   4);
+                chat_autosave(st);
+                printf("%scompacted: %lu -> %lu bytes (%lu messages)%s\n",
+                       C_DIM, (unsigned long)before,
+                       (unsigned long)c->bytes, (unsigned long)c->n,
+                       C_RESET);
+            } else if (rc == -2) {
+                net_interrupt = 0;
+                fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
+            } else {
+                fprintf(stderr, "piki: %s\n", err);
+            }
+            buf_free(&summary);
+            free(win);
         }
     } else if (strcmp(cmd, "/copy") == 0) {
         /* OSC 52 clipboard write: works locally and over ssh, but not
@@ -1199,7 +1247,7 @@ static void handle_bang(repl_state *st, char *line)
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
     "/model", "/models", "/default", "/save-model", "/tools", "/web",
-    "/system", "/trim", "/retry", "/undo", "/copy", "/paste",
+    "/system", "/trim", "/compact", "/retry", "/undo", "/copy", "/paste",
     "/chats", "/switch", "/rename", "/delete",
     "/save", "/load", "/export", "/new", "/help", "/quit", NULL
 };

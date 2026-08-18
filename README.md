@@ -241,6 +241,7 @@ into the same `api_web_kind` seam in `src/api.h`.
 /web                enable/disable web search
 /system [text]      show or set the system prompt ('-' removes it)
 /trim <n>           keep only the last n messages (shrinks the context)
+/compact            replace old history with a model-written summary
 /retry              regenerate the last reply (asks the model again)
 /undo               drop the last exchange (your message and the reply)
 /copy               copy the last reply to the clipboard (OSC 52)
@@ -264,6 +265,13 @@ becomes that provider's default for future sessions; it preserves the rest
 of the file and creates it if missing.
 
 ![/help in the REPL](screenshots/02-help.png)
+
+`/compact` asks the model for a summary of the conversation and replaces
+everything but the last few messages with it. Unlike `/trim` it keeps the
+thread of what was discussed while cutting both the RAM the history uses
+and the bytes sent on every later turn — useful in long sessions on a
+small machine or a slow link. The summary request itself is one normal
+(billed) model call; on any error the conversation is left untouched.
 
 `/copy` puts the last reply on the system clipboard through the OSC 52
 terminal escape, so it works locally and over ssh with no extra tools.

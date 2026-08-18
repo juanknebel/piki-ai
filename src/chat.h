@@ -34,6 +34,13 @@ void chat_pop(chat_t *c);      /* discards the last message */
 void chat_clear(chat_t *c);    /* clears the history, keeps the system */
 void chat_trim(chat_t *c, size_t keep);  /* keeps only the newest n messages */
 
+/* Replaces everything older than the newest keep_last messages with one
+ * user message: "[Summary of the earlier conversation]\n" + summary. The
+ * kept tail is shrunk so it starts with a user message. Recomputes bytes
+ * and re-applies max_bytes; the system prompt is untouched. No-op when
+ * n <= keep_last. */
+void chat_compact_apply(chat_t *c, const char *summary, size_t keep_last);
+
 /* Builds the window to send: system (if any) + the newest messages that
  * fit within BOTH max_msgs and max_bytes (0 = no byte limit), and within
  * outcap. The newest message is always included. Returns the number
