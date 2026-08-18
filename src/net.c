@@ -22,10 +22,14 @@ volatile sig_atomic_t net_interrupt = 0;
 
 struct net_conn {
     int fd;
-    SSL_CTX *ctx;
     SSL *ssl;
     int read_timeout_ms;   /* -1 = no limit */
 };
+
+/* One SSL_CTX per process: parsing the embedded CA roots into a fresh
+ * context on every connect is expensive on old hardware. Never freed --
+ * it lives as long as the process. */
+static SSL_CTX *g_ssl_ctx;
 
 enum {
     CONNECT_TIMEOUT_MS = 15000,
@@ -214,16 +218,22 @@ net_conn *net_connect(const char *host, int port, int use_tls,
     if (!use_tls)
         return c;
 
-    c->ctx = SSL_CTX_new(TLS_client_method());
-    if (!c->ctx ||
-        SSL_CTX_set_min_proto_version(c->ctx, TLS1_2_VERSION) != 1 ||
-        load_roots(c->ctx) < 0) {
-        seterr(err, errlen, "could not initialize TLS: %s", ssl_reason());
-        goto fail;
-    }
-    SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER, NULL);
+    if (!g_ssl_ctx) {
+        SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
 
-    c->ssl = SSL_new(c->ctx);
+        if (!ctx ||
+            SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1 ||
+            load_roots(ctx) < 0) {
+            seterr(err, errlen, "could not initialize TLS: %s",
+                   ssl_reason());
+            SSL_CTX_free(ctx);
+            goto fail;
+        }
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+        g_ssl_ctx = ctx;
+    }
+
+    c->ssl = SSL_new(g_ssl_ctx);
     if (!c->ssl) {
         seterr(err, errlen, "could not initialize TLS: %s", ssl_reason());
         goto fail;
@@ -397,8 +407,6 @@ void net_close(net_conn *c)
         SSL_shutdown(c->ssl); /* close_notify best-effort */
         SSL_free(c->ssl);
     }
-    if (c->ctx)
-        SSL_CTX_free(c->ctx);
     if (c->fd >= 0)
         close(c->fd);
     free(c);
