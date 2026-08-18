@@ -29,6 +29,7 @@
 #include "config.h"
 #include "edit.h"
 #include "json.h"
+#include "md.h"
 #include "net.h"
 #include "term.h"
 #include "tools.h"
@@ -161,60 +162,19 @@ typedef struct {
     int last_was_nl;
     int got_any;
     buf_t acc;
-    int md_bold;
-    int md_code;
-    int md_codeblock;
+    md_state md;
+    buf_t rend;   /* scratch for the rendered bytes of one delta */
 } print_ctx;
-
-static void md_render(const char *s, size_t n, print_ctx *pc)
-{
-    if (!use_color || !pc) {
-        fwrite(s, 1, n, stdout);
-        return;
-    }
-    for (size_t i = 0; i < n; ) {
-        if (!pc->md_codeblock && i + 2 < n && s[i] == '`' && s[i+1] == '`' && s[i+2] == '`') {
-            fputs(pc->md_codeblock ? C_RESET : C_DIM, stdout);
-            pc->md_codeblock ^= 1;
-            fputs("```", stdout);
-            i += 3;
-            continue;
-        }
-        if (pc->md_codeblock) {
-            fputc(s[i++], stdout);
-            continue;
-        }
-        if (s[i] == '`') {
-            fputs(pc->md_code ? C_RESET : C_DIM, stdout);
-            pc->md_code ^= 1;
-            fputc('`', stdout);
-            i++;
-            continue;
-        }
-        if (i + 1 < n && s[i] == '*' && s[i+1] == '*') {
-            fputs(pc->md_bold ? C_RESET : C_BOLD, stdout);
-            pc->md_bold ^= 1;
-            fputs("**", stdout);
-            i += 2;
-            continue;
-        }
-        if (s[i] == '*' || s[i] == '_') {
-            fputs(C_DIM, stdout);
-            fputc(s[i++], stdout);
-            fputs(C_RESET, stdout);
-            continue;
-        }
-        fputc(s[i++], stdout);
-    }
-}
 
 static int print_delta(const char *text, void *user)
 {
     print_ctx *pc = user;
     size_t n = strlen(text);
 
-    if (use_color) md_render(text, n, pc);
-    else fwrite(text, 1, n, stdout);
+    buf_reset(&pc->rend);
+    md_feed(&pc->md, text, n, &pc->rend);
+    if (pc->rend.len)
+        fwrite(pc->rend.data, 1, pc->rend.len, stdout);
     fflush(stdout);
     buf_puts(&pc->acc, text);
     if (n) {
@@ -222,6 +182,22 @@ static int print_delta(const char *text, void *user)
         pc->got_any = 1;
     }
     return 0;
+}
+
+/* Renders a complete markdown answer (agent and Responses turns print
+ * whole messages, not deltas). */
+static void print_md(const char *s, size_t n)
+{
+    md_state st;
+    buf_t out;
+
+    md_init(&st, use_color);
+    buf_init(&out);
+    md_feed(&st, s, n, &out);
+    md_finish(&st, &out);
+    if (out.len)
+        fwrite(out.data, 1, out.len, stdout);
+    buf_free(&out);
 }
 
 /* Limits on what is SENT per turn (distinct from chat_t's RAM cap). */
@@ -247,8 +223,17 @@ static int stream_turn(const provider_t *pv, const char *model,
     wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
     memset(pc, 0, sizeof *pc);
     buf_init(&pc->acc);
+    buf_init(&pc->rend);
+    md_init(&pc->md, use_color);
     rc = api_chat_stream(pv, model, win, wn, web, usage, print_delta, pc,
                          err, errlen);
+    /* flush held-back marker bytes; reset the color if a mode is open
+     * (also after an interrupt, so the terminal is not left dim) */
+    buf_reset(&pc->rend);
+    md_finish(&pc->md, &pc->rend);
+    if (pc->rend.len)
+        fwrite(pc->rend.data, 1, pc->rend.len, stdout);
+    buf_free(&pc->rend);
     if (pc->got_any && !pc->last_was_nl) {
         putchar('\n');
         fflush(stdout);
@@ -280,7 +265,8 @@ static int responses_turn(const provider_t *pv, const char *model,
     rc = api_responses_turn(pv, model, win, wn, usage, final, &sources,
                             err, errlen);
     if (rc == 0) {
-        printf("%.*s\n", (int)final->len, final->data);
+        print_md(final->data ? final->data : "", final->len);
+        putchar('\n');
         if (sources.len)
             printf("%s%.*s%s", C_DIM, (int)sources.len, sources.data,
                    C_RESET);
@@ -449,7 +435,8 @@ static int agent_turn(const provider_t *pv, const char *model,
         }
 
         if (turn.content.len) {
-            printf("%.*s\n", (int)turn.content.len, turn.content.data);
+            print_md(turn.content.data, turn.content.len);
+            putchar('\n');
             fflush(stdout);
             if (acc.len)
                 buf_puts(&acc, "\n");
@@ -1741,7 +1728,12 @@ int main(int argc, char **argv)
         }
     }
 
-    use_color = term_is_tty();
+    {
+        /* no-color.org: any non-empty NO_COLOR disables color output */
+        const char *nc = getenv("NO_COLOR");
+
+        use_color = term_is_tty() && (!nc || !*nc);
+    }
 
     config_defaults(&cfg);
     rc = config_load(&cfg, err, sizeof err);

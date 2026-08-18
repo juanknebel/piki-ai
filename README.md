@@ -144,6 +144,8 @@ Environment variables (override the config):
 
 - `OPENROUTER_API_KEY` — key for the `openrouter` provider.
 - `PIKI_BASE_URL` — alternative endpoint, e.g. `http://host:11434/v1`.
+- `NO_COLOR` — any non-empty value disables colors and the lightweight
+  markdown rendering (bold, dimmed code) of the replies.
 
 ## Usage
 

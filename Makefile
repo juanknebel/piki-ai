@@ -22,7 +22,7 @@ endif
 B    := build
 OBJS := $(B)/buf.o $(B)/net.o $(B)/http.o $(B)/json.o $(B)/sse.o \
         $(B)/api.o $(B)/chat.o $(B)/config.o $(B)/term.o $(B)/edit.o \
-        $(B)/tools.o
+        $(B)/tools.o $(B)/md.o
 
 all: $(B)/piki $(B)/tlsprobe
 
@@ -58,6 +58,7 @@ $(B)/net.o: src/certs.h
 SAN := -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
 
 SRC_test_buf  := tests/test_buf.c src/buf.c
+SRC_test_md   := tests/test_md.c src/md.c src/buf.c
 SRC_test_json := tests/test_json.c src/json.c src/buf.c
 SRC_test_http := tests/test_http.c src/http.c src/buf.c src/net.c
 SRC_test_sse  := tests/test_sse.c src/sse.c src/buf.c
@@ -72,6 +73,11 @@ $(B)/test_buf: $(SRC_test_buf) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_buf)
 $(B)/test_buf.asan: $(SRC_test_buf) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_buf)
+
+$(B)/test_md: $(SRC_test_md) | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_md)
+$(B)/test_md.asan: $(SRC_test_md) | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_md)
 
 $(B)/test_json: $(SRC_test_json) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_json)
@@ -114,6 +120,7 @@ $(B)/test_api.asan: $(SRC_test_api) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_api) $(LIBS)
 
 TESTBINS := $(B)/test_buf $(B)/test_buf.asan \
+            $(B)/test_md $(B)/test_md.asan \
             $(B)/test_json $(B)/test_json.asan \
             $(B)/test_http $(B)/test_http.asan \
             $(B)/test_sse $(B)/test_sse.asan \
@@ -126,6 +133,8 @@ TESTBINS := $(B)/test_buf $(B)/test_buf.asan \
 test: $(TESTBINS)
 	@$(B)/test_buf
 	@$(B)/test_buf.asan
+	@$(B)/test_md
+	@$(B)/test_md.asan
 	@$(B)/test_json
 	@$(B)/test_json.asan
 	@$(B)/test_http
