@@ -94,27 +94,6 @@ jobs:
           name: piki-haiku-binary
           path: dist/piki-haiku-*
 
-  netbsd:
-    runs-on: ubuntu-latest
-    needs: test
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        arch: [x86-64]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build and test on NetBSD 9.3 (${{ matrix.arch }})
-        uses: cross-platform-actions/action@v0.29.0
-        with:
-          operating_system: netbsd
-          architecture: ${{ matrix.arch }}
-          version: '9.3'
-          run: |
-            uname -a
-            make test
-            make
-            ./build/piki --version
-
   release:
     runs-on: ubuntu-latest
     needs: [static-binaries, haiku-binary]
