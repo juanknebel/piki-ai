@@ -16,7 +16,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install OpenSSL dev
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
       - name: Run test suite
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Build inside Alpine (musl + static OpenSSL) — one container per arch.
       # No external toolchain download; the amd64 runner executes the i386
@@ -54,7 +54,7 @@ jobs:
           ./dist/piki-linux-i686 --version
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: piki-linux-binaries
           path: dist/piki-linux-*
@@ -67,10 +67,10 @@ jobs:
     needs: test
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build and test on Haiku r1beta5 (x86-64)
-        uses: cross-platform-actions/action@v0.29.0
+        uses: cross-platform-actions/action@v1.4.0
         with:
           operating_system: haiku
           architecture: x86-64
@@ -89,7 +89,7 @@ jobs:
           file dist/piki-haiku-x86_64 | grep -q 'ELF 64-bit'
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: piki-haiku-binary
           path: dist/piki-haiku-*
@@ -99,7 +99,7 @@ jobs:
     needs: [static-binaries, haiku-binary]
     steps:
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
