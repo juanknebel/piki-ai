@@ -272,11 +272,44 @@ static int ask_yn(void)
            resp[0] == 'S';
 }
 
-/* Asks y/N on stdin (line). Returns 1 if yes. */
+/* Tools the user answered 'a' (always) for: skip their confirmation for
+ * the rest of the session. Never persisted. */
+#define MAX_ALWAYS_OK 8
+static char always_ok[MAX_ALWAYS_OK][32];
+static size_t n_always_ok;
+
+static int always_allowed(const char *tool)
+{
+    size_t i;
+
+    for (i = 0; i < n_always_ok; i++)
+        if (strcmp(always_ok[i], tool) == 0)
+            return 1;
+    return 0;
+}
+
+static void allow_always(const char *tool)
+{
+    if (n_always_ok < MAX_ALWAYS_OK) {
+        snprintf(always_ok[n_always_ok], sizeof always_ok[0], "%s", tool);
+        n_always_ok++;
+    }
+}
+
+/* Asks y/N/a on stdin (line). Returns 0 no, 1 yes, 2 always (yes and do
+ * not ask again for this tool this session). */
 static int confirm(const char *what)
 {
-    printf("%srun %s? [y/N] %s", C_BOLD, what, C_RESET);
-    return ask_yn();
+    char resp[16];
+
+    printf("%srun %s? [y/N/a] %s", C_BOLD, what, C_RESET);
+    fflush(stdout);
+    if (!fgets(resp, sizeof resp, stdin))
+        return 0;
+    if (resp[0] == 'a' || resp[0] == 'A')
+        return 2;
+    return (resp[0] == 'y' || resp[0] == 'Y' || resp[0] == 's' ||
+            resp[0] == 'S') ? 1 : 0;
 }
 
 /* Runs the agent loop for the last user message already added to chat.
@@ -416,8 +449,17 @@ static int agent_turn(const provider_t *pv, const char *model,
             printf("%s· %s%s\n", C_DIM, desc.data, C_RESET);
             fflush(stdout);
 
-            if (tool_is_dangerous(tc->name))
-                allowed = confirm(desc.data);
+            if (tool_is_dangerous(tc->name) &&
+                !always_allowed(tc->name)) {
+                int c3 = confirm(desc.data);
+
+                allowed = c3 > 0;
+                if (c3 == 2) {
+                    allow_always(tc->name);
+                    printf("%swill not ask again for %s this session%s\n",
+                           C_DIM, tc->name, C_RESET);
+                }
+            }
 
             if (allowed) {
                 tool_run(tc->name, tc->arguments, &result);

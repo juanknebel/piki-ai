@@ -270,7 +270,10 @@ Read-only, run without asking:
 - `search_files` — literal substring search (not a regex) in a file or
   recursively in a directory, skipping hidden and binary files.
 
-Modify the system, always ask for your `y/N` first:
+Modify the system, ask for confirmation first (`y/N/a` — `a` runs it and
+stops asking for that tool for the rest of the session, handy when the
+model is iterating on files; the grant is never persisted and `run_command`
+deserves more caution than the file tools):
 
 - `edit_file` — replace a piece of text. The text to replace must appear
   exactly once, otherwise the edit is refused and the model is told to quote
@@ -285,7 +288,8 @@ Modify the system, always ask for your `y/N` first:
 
 Requires a model with function calling support. Note that file contents are
 untrusted input: a repository could contain text trying to steer the model,
-which is why nothing can be written or executed without your confirmation.
+which is why nothing can be written or executed without your confirmation —
+and why an `a` grant is worth reserving for files/projects you trust.
 
 An agent turn runs at most `max_agent_steps` tool-call rounds (12 by
 default); on reaching the limit piki asks whether to continue for another

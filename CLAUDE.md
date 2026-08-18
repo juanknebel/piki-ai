@@ -103,10 +103,12 @@ completion lives in `main.c` behind `el_completer`.
   results carry `tool_call_id`).
 - Tools split by `tool_is_dangerous`: read-only ones (`read_file`,
   `list_files`, `search_files`) run unattended, while the ones that change
-  the system (`edit_file`, `write_file`, `run_command`) require a y/N
-  confirmation; a rejection is reported back to the model as a tool result.
+  the system (`edit_file`, `write_file`, `run_command`) require a y/N/a
+  confirmation ('a' skips further asks for that tool, session-only, never
+  persisted); a rejection is reported back to the model as a tool result.
   That confirmation is also the mitigation for untrusted file contents
-  trying to steer the model.
+  trying to steer the model — do not widen the 'a' grant beyond the
+  session.
 - `edit_file` requires its `old_string` to match **exactly once** — zero or
   several matches is an error returned to the model, which pushes it to
   quote more context instead of guessing. It also refuses files bigger than
