@@ -142,8 +142,8 @@ piki -t "list the .c files in the current directory"   # with tool use
 PIKI_BASE_URL=http://192.168.1.10:11434/v1 piki -m llama3.2 "hi"
 ```
 
-Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use),
-`-w` (web search), `--resume`, `--version`, `--help`.
+Options: `-m model`, `-p provider`, `-s system_prompt`, `-t` (tool use in
+one-shot mode), `-w` (web search), `--resume`, `--version`, `--help`.
 
 ### Sessions
 
@@ -248,7 +248,10 @@ tell them apart from real numbers.
 
 ### Tool use
 
-With `-t` (or `/tools` in the REPL) the model can request:
+In the REPL tools are enabled by default (`/tools` toggles them off); a
+one-shot question runs without tools unless `-t` is given, so scripts keep
+streaming output and are never stopped by a confirmation prompt. With
+tools on the model can request:
 
 Read-only, run without asking:
 

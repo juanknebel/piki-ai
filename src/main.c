@@ -58,7 +58,8 @@ static void usage(void)
           "[-t] [-w] [--resume] [\"question\"]\n"
           "     with no question it enters interactive mode (/help for "
           "commands)\n"
-          "     -t enables tool use (read/write files, run commands)\n"
+          "     -t enables tool use for a one-shot question (in the REPL\n"
+          "        tools are on by default; /tools toggles them)\n"
           "     -w enables OpenRouter web search\n"
           "     --resume continues the last conversation\n"
           "config: ~/.config/piki/config\n"
@@ -1449,7 +1450,7 @@ int main(int argc, char **argv)
     send_limits lim;
     struct sigaction sa;
     char err[512];
-    int tools_on = 0;
+    int tools_on = -1;   /* unset: on in the REPL, off in one-shot mode */
     int web = 0;
     int resume = 0;
     int i, rc;
@@ -1602,6 +1603,10 @@ int main(int argc, char **argv)
         chat_set_system(&chat, cfg.system);
 
     if (question) {
+        /* one-shot: tools stay off unless -t (keeps streaming and avoids
+         * y/N prompts inside scripts/pipes) */
+        if (tools_on < 0)
+            tools_on = 0;
         chat_add(&chat, "user", question);
         if (tools_on) {
             buf_t final;
@@ -1635,6 +1640,8 @@ int main(int argc, char **argv)
         history h;
         char hpath[512], spath[512];
 
+        if (tools_on < 0)
+            tools_on = 1;    /* REPL default: tools on (/tools turns off) */
         ensure_config_dir();
         if (term_is_tty() && cfg.check_updates)
             update_check();
