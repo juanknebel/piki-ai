@@ -241,6 +241,7 @@ into the same `api_web_kind` seam in `src/api.h`.
 /trim <n>           keep only the last n messages (shrinks the context)
 /retry              regenerate the last reply (asks the model again)
 /undo               drop the last exchange (your message and the reply)
+/copy               copy the last reply to the clipboard (OSC 52)
 /paste              compose a multi-line message (end with a single '.' line)
 /chats              list the named chats
 /switch <name>      switch to a named chat (creates it if new)
@@ -261,6 +262,12 @@ becomes that provider's default for future sessions; it preserves the rest
 of the file and creates it if missing.
 
 ![/help in the REPL](screenshots/02-help.png)
+
+`/copy` puts the last reply on the system clipboard through the OSC 52
+terminal escape, so it works locally and over ssh with no extra tools.
+The terminal must support it (xterm, foot, kitty, alacritty, wezterm do;
+under tmux add `set -g set-clipboard on`). piki cannot detect support,
+so the confirmation is optimistic. Replies over 74 KB are truncated.
 
 `!cmd` is a local shell escape — handy to check something without leaving the
 REPL. `!!cmd` additionally feeds the command's output (stdout + stderr, with

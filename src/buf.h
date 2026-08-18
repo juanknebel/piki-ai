@@ -23,6 +23,9 @@ void buf_append(buf_t *b, const void *p, size_t n);
 void buf_puts(buf_t *b, const char *s);
 void buf_putc(buf_t *b, char c);
 
+/* Appends the base64 encoding of p (RFC 4648, with '=' padding). */
+void buf_b64(buf_t *b, const void *p, size_t n);
+
 #if defined(__GNUC__)
 __attribute__((format(printf, 2, 3)))
 #endif

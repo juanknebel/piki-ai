@@ -558,6 +558,7 @@ static void repl_help(int tools_on, int web_on)
            "  /trim <n>           keep only the last n messages\n"
            "  /retry              regenerate the last reply\n"
            "  /undo               drop the last exchange\n"
+           "  /copy               copy the last reply to the clipboard\n"
            "  /paste              compose a multi-line message (end with '.')\n"
            "  /chats              list the named chats\n"
            "  /switch <name>      switch to a named chat (creates it if new)\n"
@@ -879,6 +880,47 @@ static int handle_command(repl_state *st, char *line)
             chat_pop(c);   /* drop the reply, keep the user message */
             send_user_turn(st);
         }
+    } else if (strcmp(cmd, "/copy") == 0) {
+        /* OSC 52 clipboard write: works locally and over ssh, but not
+         * every terminal supports it, so the confirmation is optimistic. */
+        const char *text = NULL;
+        size_t k = st->chat->n;
+
+        while (k > 0 && !text) {
+            k--;
+            if (strcmp(st->chat->msgs[k].role, "assistant") == 0)
+                text = st->chat->msgs[k].content;
+        }
+        if (!text) {
+            printf("%snothing to copy%s\n", C_DIM, C_RESET);
+        } else if (!term_is_tty()) {
+            fputs("piki: /copy needs a terminal\n", stderr);
+        } else {
+            enum { COPY_MAX = 74 * 1024 };   /* ~100 KB of base64 */
+            size_t len = strlen(text), off = 0;
+            buf_t seq;
+
+            if (len > COPY_MAX) {
+                len = COPY_MAX;
+                fprintf(stderr, "piki: reply truncated to %d KB for the "
+                        "clipboard\n", COPY_MAX / 1024);
+            }
+            buf_init(&seq);
+            buf_puts(&seq, "\033]52;c;");
+            buf_b64(&seq, text, len);
+            buf_putc(&seq, '\a');
+            while (off < seq.len) {
+                ssize_t w = write(STDOUT_FILENO, seq.data + off,
+                                  seq.len - off);
+
+                if (w <= 0)
+                    break;
+                off += (size_t)w;
+            }
+            buf_free(&seq);
+            printf("%scopied %lu bytes to the clipboard%s\n", C_DIM,
+                   (unsigned long)len, C_RESET);
+        }
     } else if (strcmp(cmd, "/paste") == 0) {
         buf_t msg;
         char tmp[4096];
@@ -1170,7 +1212,7 @@ static void handle_bang(repl_state *st, char *line)
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
     "/model", "/models", "/default", "/save-model", "/tools", "/web",
-    "/system", "/trim", "/retry", "/undo", "/paste",
+    "/system", "/trim", "/retry", "/undo", "/copy", "/paste",
     "/chats", "/switch", "/rename", "/delete",
     "/save", "/load", "/export", "/new", "/help", "/quit", NULL
 };

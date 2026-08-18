@@ -56,6 +56,33 @@ int main(void)
     buf_printf(&b, "%s", "cd");
     CHECK(strcmp(b.data, "abcd") == 0);
 
+    /* base64: RFC 4648 test vectors */
+    {
+        static const struct { const char *in, *out; } v[] = {
+            {"", ""}, {"f", "Zg=="}, {"fo", "Zm8="}, {"foo", "Zm9v"},
+            {"foob", "Zm9vYg=="}, {"fooba", "Zm9vYmE="},
+            {"foobar", "Zm9vYmFy"},
+        };
+        size_t i;
+
+        for (i = 0; i < sizeof v / sizeof v[0]; i++) {
+            buf_reset(&b);
+            buf_b64(&b, v[i].in, strlen(v[i].in));
+            CHECK(strcmp(b.data, v[i].out) == 0);
+        }
+
+        /* binary bytes, including NUL and 0xFF */
+        buf_reset(&b);
+        buf_b64(&b, "\x00\xff\x10", 3);
+        CHECK(strcmp(b.data, "AP8Q") == 0);
+
+        /* appends after existing content, longer than one group run */
+        buf_reset(&b);
+        buf_puts(&b, "x:");
+        buf_b64(&b, "aaaaaaaaaaaa", 12);   /* 4 groups of 3 */
+        CHECK(strcmp(b.data, "x:YWFhYWFhYWFhYWFh") == 0);
+    }
+
     buf_free(&b);
     buf_free(&c);
     CHECK(b.data == NULL && b.cap == 0);
