@@ -20,6 +20,27 @@ local servers like **Ollama** or **llama.cpp** (`llama-server`).
 
 ![piki chatting in the terminal](screenshots/01-chat.png)
 
+## Install (prebuilt binary)
+
+Download the latest release with `curl`, make it executable, and put it in
+your `PATH`:
+
+```sh
+# Linux 64-bit
+curl -fLO https://github.com/juanknebel/piki-ai/releases/latest/download/piki-linux-x86_64
+chmod +x piki-linux-x86_64
+mv piki-linux-x86_64 ~/.local/bin/piki   # or /usr/local/bin/piki
+
+# Linux 32-bit (i686)
+curl -fLO https://github.com/juanknebel/piki-ai/releases/latest/download/piki-linux-i686
+
+# Haiku x86-64 (needs `pkgman install openssl3` first)
+curl -fLO https://github.com/juanknebel/piki-ai/releases/latest/download/piki-haiku-x86_64
+```
+
+To fetch a specific version instead of the latest, replace
+`latest/download` with `download/vX.Y.Z`.
+
 ## Build
 
 ### Requirements
