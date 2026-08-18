@@ -5,8 +5,9 @@ no runtime dependencies**. Designed to run anywhere, including old 32-bit
 laptops (Linux i686) and Haiku OS. Verified on real hardware: an Acer
 Aspire One 32-bit netbook with 1 GB of RAM.
 
-Talks to any OpenAI-compatible API endpoint: OpenRouter (by default) and
-local servers like **Ollama** or **llama.cpp** (`llama-server`).
+Talks to any OpenAI-compatible API endpoint: OpenRouter (by default),
+**Meta Model API** (api.meta.ai), and local servers like **Ollama** or
+**llama.cpp** (`llama-server`).
 
 - Written in C99. Only build dependency: OpenSSL (for TLS).
 - Release binaries are **static** (musl + embedded OpenSSL): a single
@@ -15,6 +16,8 @@ local servers like **Ollama** or **llama.cpp** (`llama-server`).
   certificate store has grown old.
 - Streaming responses token by token; `Ctrl-C` cancels without closing the
   program.
+- Server-side web search (`/web`) on OpenRouter and Meta Model API, with
+  the sources cited under each answer.
 - Line editor with history and multi-line aware editing, tool use enabled
   by default (read/write files, run commands with confirmation), and
   save/load conversations.
@@ -108,6 +111,13 @@ key = sk-or-...
 url = http://192.168.1.10:11434/v1    ; no key: plain HTTP, no auth
 model = llama3.2                      ; default model for this provider
 
+[provider "muse"]
+url = https://api.meta.ai/v1
+key = ...
+model = muse-spark-1.2
+web_search = responses                ; optional: none|plugin|responses
+                                      ; (detected by host when omitted)
+
 [defaults]
 provider = openrouter
 system = Answer in English.
@@ -179,16 +189,29 @@ internet connection nothing is shown and nothing waits. Disable it with
 
 ### Web search
 
-`-w` (or `/web` in the REPL) enables OpenRouter's web-search plugin, so the
-model can answer with up-to-date information. When active, the REPL prompt
-changes to `web>` and the banner shows `[web]`. Web search is billed
-separately by OpenRouter. Equivalent to appending `:online` to the model
-slug (e.g. `-m anthropic/claude-haiku-4.5:online`), which also works without
-the flag.
+`-w` (or `/web` in the REPL) enables server-side web search, so the model
+can answer with up-to-date information. When active, the REPL prompt
+changes to `web>` and the banner shows `[web]`. Providers bill searches
+separately from tokens. How the search is requested depends on the
+provider, detected by host or forced with `web_search` in its config
+section (`none`, `plugin` or `responses`):
 
-Web search only exists on OpenRouter: on any other provider `/web` refuses
-to turn on and `-w` is ignored with a warning, instead of sending a
-`plugins` field the server would reject.
+- **OpenRouter** (`plugin`): the web plugin rides on the normal
+  chat/completions request, so streaming and tool use keep working.
+  Equivalent to appending `:online` to the model slug.
+- **Meta Model API** (`responses`): the turn is sent through the
+  provider's Responses API (`{base}/responses`) with its built-in
+  `web_search` tool, forced via `tool_choice` so the switch is
+  consistent: web on means every answer is grounded in a fresh search,
+  web off means the tool is not even declared. These turns are
+  non-streaming (like agent turns), print their sources underneath, and
+  skip piki's local tools while web is on. Any OpenAI-compatible host
+  with a Responses endpoint works via `web_search = responses`.
+
+On a provider with no server-side search, `/web` refuses to turn on and
+`-w` is ignored with a warning, instead of sending fields the server
+would reject. New search mechanisms (e.g. Anthropic's server tools) plug
+into the same `api_web_kind` seam in `src/api.h`.
 
 ![the web> prompt and the [web] tag](screenshots/06-web.png)
 
@@ -218,10 +241,10 @@ to turn on and `-w` is ignored with a warning, instead of sending a
 !!cmd               run a shell command and add its output to the chat
 ```
 
-` /model save` (or `/default`) persists the model to `[defaults] model = ...` in
-`~/.config/piki/config` so it becomes the default for future sessions; it
-preserves existing providers and other `[defaults]` keys and creates the file
-if missing.
+`/model save` (or `/default`) persists the model into the active provider's
+section of `~/.config/piki/config` (`[provider "..."] model = ...`) so it
+becomes that provider's default for future sessions; it preserves the rest
+of the file and creates it if missing.
 
 ![/help in the REPL](screenshots/02-help.png)
 

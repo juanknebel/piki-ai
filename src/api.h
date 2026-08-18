@@ -5,6 +5,19 @@
 
 #include "buf.h"
 
+/* How a provider exposes server-side web search. This is the extension
+ * point for new providers: add a value here, a request builder + response
+ * parser in api.c, and a detection case in main.c (or the provider's
+ * web_search config key). E.g. Anthropic's server tools would become
+ * API_WEB_ANTHROPIC with its own builder/parser. */
+typedef enum {
+    API_WEB_NONE = 0,   /* provider has no server-side web search */
+    API_WEB_PLUGIN,     /* OpenRouter: "plugins":[{"id":"web"}] on
+                           chat/completions (streams like normal chat) */
+    API_WEB_RESPONSES   /* OpenAI/Meta Responses API: POST {base}/responses
+                           with tools [{"type":"web_search"}] */
+} api_web_kind;
+
 /* An OpenAI-compatible endpoint: OpenRouter, and in the future Ollama /
  * llama-server (use_tls = 0, api_key = NULL) or others. */
 typedef struct {
@@ -13,6 +26,7 @@ typedef struct {
     int use_tls;
     const char *base_path;   /* e.g. "/api/v1" or "/v1" */
     const char *api_key;     /* NULL = no Authorization */
+    int web_kind;            /* api_web_kind */
 } provider_t;
 
 typedef struct {
@@ -56,6 +70,25 @@ int api_models(const provider_t *pv, buf_t *out,
  * the background update check; the caller decides what (if anything) to
  * show. 0 ok, -1 error (err), -2 interrupted. */
 int api_latest_version(const char *owner_repo, char *out, size_t cap,
+                       char *err, size_t errlen);
+
+/* --- Responses API (server-side web search) --------------------------- */
+
+/* Extracts from a non-streaming Responses API JSON body: the assistant
+ * text (appended to out), one "title <url>" line per distinct
+ * url_citation (appended to sources; NULL to skip) and the token usage
+ * (input_tokens/output_tokens; NULL to skip). Exposed separately so the
+ * parser is testable without a network. 0 ok, -1 malformed (err). */
+int api_responses_parse(const char *body, buf_t *out, buf_t *sources,
+                        token_usage *usage, char *err, size_t errlen);
+
+/* One non-streaming turn through the Responses API ({base}/responses)
+ * with the provider's web_search tool attached. Appends the answer to
+ * out and the citations to sources (may be NULL).
+ * 0 ok, -1 error (err), -2 interrupted. */
+int api_responses_turn(const provider_t *pv, const char *model,
+                       const chat_msg *msgs, size_t nmsgs,
+                       token_usage *usage, buf_t *out, buf_t *sources,
                        char *err, size_t errlen);
 
 /* --- tool use / agent ------------------------------------------------- */

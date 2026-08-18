@@ -155,6 +155,180 @@ done:
     return ret;
 }
 
+/* --- Responses API (server-side web search) --------------------------- */
+
+/* Request body for {base}/responses: the history goes in "input" as an
+ * array of role/content messages and web search is a built-in tool.
+ * tool_choice forces the search so /web behaves like OpenRouter's
+ * plugin: on = every answer is grounded, off = the tool does not exist. */
+static void build_responses_body(buf_t *b, const char *model,
+                                 const chat_msg *msgs, size_t nmsgs)
+{
+    size_t i;
+
+    buf_puts(b, "{\"model\":");
+    json_escape(b, model);
+    buf_puts(b, ",\"input\":[");
+    for (i = 0; i < nmsgs; i++) {
+        if (i)
+            buf_putc(b, ',');
+        buf_puts(b, "{\"role\":");
+        json_escape(b, msgs[i].role);
+        buf_puts(b, ",\"content\":");
+        json_escape(b, msgs[i].content);
+        buf_putc(b, '}');
+    }
+    buf_puts(b, "],\"tools\":[{\"type\":\"web_search\"}],"
+                "\"tool_choice\":{\"type\":\"web_search\"}}");
+}
+
+/* Appends "title <url>" to sources unless that url is already there. */
+static void add_citation(buf_t *sources, const char *title,
+                         const char *url)
+{
+    if (!url || !*url)
+        return;
+    if (sources->data && strstr(sources->data, url))
+        return;
+    if (title && *title) {
+        buf_puts(sources, title);
+        buf_putc(sources, ' ');
+    }
+    buf_putc(sources, '<');
+    buf_puts(sources, url);
+    buf_puts(sources, ">\n");
+}
+
+int api_responses_parse(const char *body, buf_t *out, buf_t *sources,
+                        token_usage *usage, char *err, size_t errlen)
+{
+    json_doc *doc = NULL;
+    json_val *v = json_parse(body, &doc, err, errlen);
+    json_val *output;
+    size_t i, j, k;
+    int got_text = 0;
+
+    if (!v)
+        return -1;
+    output = json_get(v, "output");
+    if (!output || output->type != JSON_ARR) {
+        snprintf(err, errlen, "response has no output array");
+        json_doc_free(doc);
+        return -1;
+    }
+    for (i = 0; i < output->u.arr.n; i++) {
+        json_val *item = output->u.arr.items[i];
+        json_val *content;
+        const char *type = json_str(json_get(item, "type"));
+
+        if (!type || strcmp(type, "message") != 0)
+            continue;   /* web_search_call, reasoning, ... */
+        content = json_get(item, "content");
+        if (!content || content->type != JSON_ARR)
+            continue;
+        for (j = 0; j < content->u.arr.n; j++) {
+            json_val *part = content->u.arr.items[j];
+            json_val *anns;
+            const char *ptype = json_str(json_get(part, "type"));
+            const char *text = json_str(json_get(part, "text"));
+
+            if (!ptype || strcmp(ptype, "output_text") != 0 || !text)
+                continue;
+            buf_puts(out, text);
+            got_text = 1;
+            anns = json_get(part, "annotations");
+            if (!sources || !anns || anns->type != JSON_ARR)
+                continue;
+            for (k = 0; k < anns->u.arr.n; k++) {
+                json_val *a = anns->u.arr.items[k];
+                const char *atype = json_str(json_get(a, "type"));
+
+                if (atype && strcmp(atype, "url_citation") == 0)
+                    add_citation(sources,
+                                 json_str(json_get(a, "title")),
+                                 json_str(json_get(a, "url")));
+            }
+        }
+    }
+    if (usage) {
+        json_val *u = json_get(v, "usage");
+
+        usage->prompt_tokens = (long)json_num(
+            json_get(u, "input_tokens"), usage->prompt_tokens);
+        usage->completion_tokens = (long)json_num(
+            json_get(u, "output_tokens"), usage->completion_tokens);
+    }
+    json_doc_free(doc);
+    if (!got_text) {
+        snprintf(err, errlen, "response has no output text");
+        return -1;
+    }
+    return 0;
+}
+
+int api_responses_turn(const provider_t *pv, const char *model,
+                       const chat_msg *msgs, size_t nmsgs,
+                       token_usage *usage, buf_t *out, buf_t *sources,
+                       char *err, size_t errlen)
+{
+    buf_t body, path, resp;
+    net_conn *c = NULL;
+    http_resp r;
+    int rc, ret = -1;
+
+    buf_init(&body);
+    buf_init(&path);
+    buf_init(&resp);
+    build_responses_body(&body, model, msgs, nmsgs);
+    buf_printf(&path, "%s/responses", pv->base_path);
+
+    c = net_connect(pv->host, pv->port, pv->use_tls, err, errlen);
+    if (!c)
+        goto done;
+
+    rc = http_post(c, pv->host, path.data, pv->api_key,
+                   body.data, body.len);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0) {
+        snprintf(err, errlen, "network error sending the request");
+        goto done;
+    }
+    rc = http_read_response(c, &r, err, errlen);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0)
+        goto done;
+    rc = http_read_all(&r, &resp);
+    if (rc == NET_EINTR) {
+        ret = -2;
+        goto done;
+    }
+    if (rc < 0) {
+        snprintf(err, errlen, "network error reading the response");
+        goto done;
+    }
+    if (r.meta.status != 200) {
+        set_http_error(r.meta.status, resp.data ? resp.data : "",
+                       err, errlen);
+        goto done;
+    }
+    ret = api_responses_parse(resp.data ? resp.data : "", out, sources,
+                              usage, err, errlen);
+
+done:
+    if (c)
+        net_close(c);
+    buf_free(&body);
+    buf_free(&path);
+    buf_free(&resp);
+    return ret;
+}
+
 int api_models(const provider_t *pv, buf_t *out,
                char *err, size_t errlen)
 {

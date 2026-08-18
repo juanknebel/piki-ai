@@ -65,7 +65,8 @@ SRC_test_chat := tests/test_chat.c src/chat.c src/json.c src/buf.c
 SRC_test_conf := tests/test_config.c src/config.c src/buf.c
 SRC_test_edit := tests/test_edit.c src/edit.c src/buf.c
 SRC_test_tool := tests/test_tools.c src/tools.c src/json.c src/buf.c
-SRC_test_api := tests/test_api.c src/chat.c src/json.c src/buf.c
+SRC_test_api := tests/test_api.c src/api.c src/chat.c src/json.c \
+                src/http.c src/sse.c src/net.c src/buf.c
 
 $(B)/test_buf: $(SRC_test_buf) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_buf)
@@ -108,9 +109,9 @@ $(B)/test_tools.asan: $(SRC_test_tool) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_tool)
 
 $(B)/test_api: $(SRC_test_api) | $(B)
-	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_api)
+	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_api) $(LIBS)
 $(B)/test_api.asan: $(SRC_test_api) | $(B)
-	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_api)
+	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_api) $(LIBS)
 
 TESTBINS := $(B)/test_buf $(B)/test_buf.asan \
             $(B)/test_json $(B)/test_json.asan \

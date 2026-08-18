@@ -32,6 +32,7 @@ typedef struct {
     char url[256];
     char key[256];
     char model[128];          /* default model for this provider ("" = none) */
+    char web_search[16];      /* "" = detect by host; none|plugin|responses */
 } cfg_provider;
 
 typedef struct {

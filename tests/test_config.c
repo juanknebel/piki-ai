@@ -43,6 +43,7 @@ int main(void)
         "[provider \"ollama\"]\n"
         "  url   =   http://192.168.1.10:11434/v1  \n"
         "model = qwen2.5:3b\n"
+        "web_search = responses\n"
         "\n"
         "[defaults]\n"
         "provider = ollama\n"
@@ -60,7 +61,10 @@ int main(void)
                  "http://192.168.1.10:11434/v1") == 0);
     CHECK(config_provider(&c, "ollama")->key[0] == '\0');
     CHECK(strcmp(config_provider(&c, "ollama")->model, "qwen2.5:3b") == 0);
+    CHECK(strcmp(config_provider(&c, "ollama")->web_search,
+                 "responses") == 0);
     CHECK(config_provider(&c, "openrouter")->model[0] == '\0');
+    CHECK(config_provider(&c, "openrouter")->web_search[0] == '\0');
     CHECK(config_provider(&c, "inexistente") == NULL);
     CHECK(strcmp(c.default_provider, "ollama") == 0);
     CHECK(strcmp(c.system, "Responde en castellano rioplatense.") == 0);
@@ -114,6 +118,7 @@ int main(void)
     expect_fail("[defaults]\nmax_memory = -5\n");
     expect_fail("[defaults]\nmax_context_tokens = abc\n");
     expect_fail("[defaults]\nmax_agent_steps = 0\n");
+    expect_fail("[provider \"x\"]\nweb_search = google\n");
     expect_fail("[provider \"nombre-absurdamente-largo-que-no-entra-"
                 "en-el-campo\"]\n");
 

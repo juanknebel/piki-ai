@@ -67,11 +67,23 @@ static void usage(void)
           "\n" PIKI_REPO "\n", stderr);
 }
 
-/* The web-search plugin is an OpenRouter extension; other OpenAI-compatible
- * providers reject the "plugins" field. */
-static int provider_supports_web(const provider_t *pv)
+/* How this provider does server-side web search: the provider's
+ * web_search config key wins; otherwise detect by host. New providers
+ * (e.g. Anthropic server tools) plug in here and in api.h/api.c. */
+static int provider_web_kind(const char *host, const char *cfg_web)
 {
-    return strstr(pv->host, "openrouter.ai") != NULL;
+    if (cfg_web && *cfg_web) {
+        if (strcmp(cfg_web, "plugin") == 0)
+            return API_WEB_PLUGIN;
+        if (strcmp(cfg_web, "responses") == 0)
+            return API_WEB_RESPONSES;
+        return API_WEB_NONE;
+    }
+    if (strstr(host, "openrouter.ai"))
+        return API_WEB_PLUGIN;
+    if (strstr(host, "meta.ai"))
+        return API_WEB_RESPONSES;
+    return API_WEB_NONE;
 }
 
 /* Parses http[s]://host[:port][/base] into pv. 0 ok, -1 invalid. */
@@ -239,6 +251,40 @@ static int stream_turn(const provider_t *pv, const char *model,
         putchar('\n');
         fflush(stdout);
     }
+    free(win);
+    return rc;
+}
+
+/* One web-search turn through the provider's Responses API. Non-streaming
+ * (like agent turns); prints the answer and its sources, and leaves the
+ * text in final for the history. */
+static int responses_turn(const provider_t *pv, const char *model,
+                          const chat_t *chat, send_limits lim,
+                          token_usage *usage, buf_t *final,
+                          char *err, size_t errlen)
+{
+    chat_msg *win;
+    size_t wn;
+    buf_t sources;
+    int rc;
+
+    win = malloc((chat->n + 1) * sizeof *win);
+    if (!win) {
+        snprintf(err, errlen, "out of memory");
+        return -1;
+    }
+    wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
+    buf_init(&sources);
+    rc = api_responses_turn(pv, model, win, wn, usage, final, &sources,
+                            err, errlen);
+    if (rc == 0) {
+        printf("%.*s\n", (int)final->len, final->data);
+        if (sources.len)
+            printf("%s%.*s%s", C_DIM, (int)sources.len, sources.data,
+                   C_RESET);
+        fflush(stdout);
+    }
+    buf_free(&sources);
     free(win);
     return rc;
 }
@@ -674,12 +720,35 @@ static void send_user_turn(repl_state *st)
     reply_bytes = 0;
     got_reply = 0;
 
-    if (st->tools_on) {
+    /* the OpenRouter plugin rides on chat/completions; the Responses API
+     * is its own endpoint and takes over the whole turn */
+    if (st->web && st->pv->web_kind == API_WEB_RESPONSES) {
+        buf_t final;
+
+        buf_init(&final);
+        rc = responses_turn(st->pv, st->model, st->chat, st->lim,
+                            &tu, &final, err, sizeof err);
+        if (rc == 0) {
+            chat_add(st->chat, "assistant", final.data);
+            reply_bytes = final.len;
+            got_reply = 1;
+        } else if (rc == -2) {
+            net_interrupt = 0;
+            fprintf(stderr, "%s[interrupted]%s\n", C_DIM, C_RESET);
+            chat_pop(st->chat);
+        } else {
+            fprintf(stderr, "piki: %s\n", err);
+            chat_pop(st->chat);
+        }
+        buf_free(&final);
+    } else if (st->tools_on) {
+        int plugin_web = st->web &&
+                         st->pv->web_kind == API_WEB_PLUGIN;
         buf_t final;
 
         buf_init(&final);
         rc = agent_turn(st->pv, st->model, st->chat,
-                        st->lim, st->web, st->max_agent_steps,
+                        st->lim, plugin_web, st->max_agent_steps,
                         &tu, &final, err, sizeof err);
         if (rc == 0) {
             chat_add(st->chat, "assistant", final.data);
@@ -695,10 +764,12 @@ static void send_user_turn(repl_state *st)
         }
         buf_free(&final);
     } else {
+        int plugin_web = st->web &&
+                         st->pv->web_kind == API_WEB_PLUGIN;
         print_ctx pc;
 
         rc = stream_turn(st->pv, st->model, st->chat,
-                         st->lim, st->web, &tu, &pc,
+                         st->lim, plugin_web, &tu, &pc,
                          err, sizeof err);
         if (rc == 0) {
             chat_add(st->chat, "assistant", pc.acc.data);
@@ -866,13 +937,16 @@ static int handle_command(repl_state *st, char *line)
         printf("%stool use: %s%s\n", C_DIM,
                st->tools_on ? "on" : "off", C_RESET);
     } else if (strcmp(cmd, "/web") == 0) {
-        if (!st->web && !provider_supports_web(st->pv)) {
-            printf("%sweb search is an OpenRouter plugin; %s does not "
-                   "support it%s\n", C_DIM, st->pv->host, C_RESET);
+        if (!st->web && st->pv->web_kind == API_WEB_NONE) {
+            printf("%s%s has no server-side web search%s\n",
+                   C_DIM, st->pv->host, C_RESET);
         } else {
             st->web = !st->web;
             printf("%sweb search: %s%s\n", C_DIM,
                    st->web ? "on" : "off", C_RESET);
+            if (st->web && st->pv->web_kind == API_WEB_RESPONSES)
+                printf("%sweb turns use the Responses API: no streaming "
+                       "and no local tools while on%s\n", C_DIM, C_RESET);
         }
     } else if (strcmp(cmd, "/model") == 0) {
         if (arg && *arg) {
@@ -1504,6 +1578,7 @@ int main(int argc, char **argv)
     const char *question = NULL;
     const char *env_key, *base_url;
     const char *prov_model;
+    const char *prov_web;
     char prov_name[32];
     config_t cfg;
     provider_t pv;
@@ -1571,6 +1646,7 @@ int main(int argc, char **argv)
     pv.api_key = NULL;
 
     prov_model = NULL;
+    prov_web = NULL;
     prov_name[0] = '\0';
     if (base_url && *base_url) {
         if (parse_base_url(base_url, &pv) < 0) {
@@ -1597,6 +1673,8 @@ int main(int argc, char **argv)
                 pv.api_key = cp->key;
             if (cp->model[0])
                 prov_model = cp->model;
+            if (cp->web_search[0])
+                prov_web = cp->web_search;
         } else if (strcmp(name, "openrouter") != 0) {
             fprintf(stderr, "piki: provider %s is not in the config\n",
                     name);
@@ -1612,14 +1690,16 @@ int main(int argc, char **argv)
         }
     }
 
+    pv.web_kind = provider_web_kind(pv.host, prov_web);
+
     /* model precedence: -m > provider's model > built-in */
     if (!model[0])
         snprintf(model, sizeof model, "%s",
                  prov_model ? prov_model : DEFAULT_MODEL);
 
-    if (web && !provider_supports_web(&pv)) {
-        fprintf(stderr, "piki: -w ignored: web search is an OpenRouter "
-                "plugin; %s does not support it\n", pv.host);
+    if (web && pv.web_kind == API_WEB_NONE) {
+        fprintf(stderr, "piki: -w ignored: %s has no server-side "
+                "web search\n", pv.host);
         web = 0;
     }
 
@@ -1682,11 +1762,19 @@ int main(int argc, char **argv)
         if (tools_on < 0)
             tools_on = 0;
         chat_add(&chat, "user", question);
-        if (tools_on) {
+        if (web && pv.web_kind == API_WEB_RESPONSES) {
             buf_t final;
 
             buf_init(&final);
-            rc = agent_turn(&pv, model, &chat, lim, web,
+            rc = responses_turn(&pv, model, &chat, lim, NULL, &final,
+                                err, sizeof err);
+            buf_free(&final);
+        } else if (tools_on) {
+            buf_t final;
+
+            buf_init(&final);
+            rc = agent_turn(&pv, model, &chat, lim,
+                            web && pv.web_kind == API_WEB_PLUGIN,
                             cfg.max_agent_steps, NULL, &final,
                             err, sizeof err);
             buf_free(&final);

@@ -192,6 +192,16 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
                 bad = copystr(prov->key, sizeof prov->key, val);
             else if (strcmp(key, "model") == 0)
                 bad = copystr(prov->model, sizeof prov->model, val);
+            else if (strcmp(key, "web_search") == 0) {
+                if (strcmp(val, "none") != 0 &&
+                    strcmp(val, "plugin") != 0 &&
+                    strcmp(val, "responses") != 0) {
+                    seterr(err, errlen, "invalid web_search", lineno);
+                    return -1;
+                }
+                bad = copystr(prov->web_search,
+                              sizeof prov->web_search, val);
+            }
             if (bad) {
                 seterr(err, errlen, "value too long", lineno);
                 return -1;

@@ -42,8 +42,14 @@ net     TCP + TLS (OpenSSL); use_tls=0 = plain HTTP for local providers
 http    HTTP/1.1 request/response + incremental chunked decoder
 json    recursive-descent parser (arena, one free/doc) + escaping writer
 sse     incremental Server-Sent Events parser
-api     OpenAI-compatible layer: chat_stream, agent_turn, models; web plugin
-        (-w / :online) and token_usage accounting flow through here
+api     OpenAI-compatible layer: chat_stream, agent_turn, responses_turn,
+        models; web search and token_usage accounting flow through here.
+        Web search is per-provider via api_web_kind (api.h): OpenRouter's
+        plugin rides on chat/completions, Meta uses the Responses API
+        ({base}/responses, non-streaming, url_citation sources); new
+        providers (e.g. Anthropic server tools) add an enum value, a
+        builder/parser in api.c and a detection case in main.c
+        (provider_web_kind, overridable with the web_search config key)
 chat    message history + context window (chat_window truncates)
 config  INI parser (~/.config/piki/config)
 edit    raw-termios line editor + history + Tab completion (via a callback;
