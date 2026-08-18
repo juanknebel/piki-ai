@@ -458,7 +458,7 @@ static void repl_help(int tools_on, int web_on)
 {
     printf("commands:\n"
            "  /model [id]         show or change the model\n"
-           "  /model save         save the current model as default\n"
+           "  /model save         save the model as the provider default\n"
            "  /model <id> save    change model and save as default\n"
            "  /default [id]       alias for /model save\n"
            "  /models             list the provider's models\n"
@@ -483,6 +483,7 @@ static void repl_help(int tools_on, int web_on)
 
 typedef struct {
     const provider_t *pv;
+    const char *provider_name; /* config section name; "" = PIKI_BASE_URL */
     char *model;
     size_t modelcap;
     chat_t *chat;
@@ -836,7 +837,8 @@ static int handle_command(repl_state *st, char *line)
             if (strcmp(arg, "save") == 0) {
                 char serr[256];
 
-                if (config_save_model(st->model, serr, sizeof serr) == 0)
+                if (config_save_model(st->provider_name, st->model,
+                                      serr, sizeof serr) == 0)
                     printf("%sdefault model saved: %s%s\n", C_DIM,
                            st->model, C_RESET);
                 else
@@ -869,7 +871,8 @@ static int handle_command(repl_state *st, char *line)
                     if (do_save) {
                         char serr[256];
 
-                        if (config_save_model(st->model, serr,
+                        if (config_save_model(st->provider_name,
+                                              st->model, serr,
                                               sizeof serr) == 0)
                             printf("%sdefault model saved: %s%s\n", C_DIM,
                                    st->model, C_RESET);
@@ -891,7 +894,8 @@ static int handle_command(repl_state *st, char *line)
 
                 strcpy(st->model, arg);
                 printf("%smodel: %s%s\n", C_DIM, st->model, C_RESET);
-                if (config_save_model(st->model, serr, sizeof serr) == 0)
+                if (config_save_model(st->provider_name, st->model,
+                                      serr, sizeof serr) == 0)
                     printf("%sdefault model saved: %s%s\n", C_DIM,
                            st->model, C_RESET);
                 else
@@ -902,7 +906,8 @@ static int handle_command(repl_state *st, char *line)
         } else {
             char serr[256];
 
-            if (config_save_model(st->model, serr, sizeof serr) == 0)
+            if (config_save_model(st->provider_name, st->model,
+                                      serr, sizeof serr) == 0)
                 printf("%sdefault model saved: %s%s\n", C_DIM,
                        st->model, C_RESET);
             else
@@ -1456,6 +1461,8 @@ int main(int argc, char **argv)
     const char *provider_name = NULL;
     const char *question = NULL;
     const char *env_key, *base_url;
+    const char *prov_model;
+    char prov_name[32];
     config_t cfg;
     provider_t pv;
     chat_t chat;
@@ -1512,10 +1519,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!model[0])
-        snprintf(model, sizeof model, "%s",
-                 cfg.model[0] ? cfg.model : DEFAULT_MODEL);
-
     env_key = getenv("OPENROUTER_API_KEY");
     base_url = getenv("PIKI_BASE_URL");
 
@@ -1525,6 +1528,8 @@ int main(int argc, char **argv)
     pv.base_path = "/api/v1";
     pv.api_key = NULL;
 
+    prov_model = NULL;
+    prov_name[0] = '\0';
     if (base_url && *base_url) {
         if (parse_base_url(base_url, &pv) < 0) {
             fputs("piki: invalid PIKI_BASE_URL\n", stderr);
@@ -1538,6 +1543,8 @@ int main(int argc, char **argv)
                            cfg.default_provider : "openrouter";
         cfg_provider *cp = config_provider(&cfg, name);
 
+        snprintf(prov_name, sizeof prov_name, "%s", name);
+
         if (cp) {
             if (parse_base_url(cp->url, &pv) < 0) {
                 fprintf(stderr, "piki: invalid url for provider %s\n",
@@ -1546,6 +1553,8 @@ int main(int argc, char **argv)
             }
             if (cp->key[0])
                 pv.api_key = cp->key;
+            if (cp->model[0])
+                prov_model = cp->model;
         } else if (strcmp(name, "openrouter") != 0) {
             fprintf(stderr, "piki: provider %s is not in the config\n",
                     name);
@@ -1560,6 +1569,11 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+
+    /* model precedence: -m > provider's model > built-in */
+    if (!model[0])
+        snprintf(model, sizeof model, "%s",
+                 prov_model ? prov_model : DEFAULT_MODEL);
 
     if (web && !provider_supports_web(&pv)) {
         fprintf(stderr, "piki: -w ignored: web search is an OpenRouter "
@@ -1688,6 +1702,7 @@ int main(int argc, char **argv)
         }
 
         st.pv = &pv;
+        st.provider_name = prov_name;
         st.model = model;
         st.modelcap = sizeof model;
         st.chat = &chat;

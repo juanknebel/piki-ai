@@ -145,8 +145,6 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
             if (strcmp(key, "provider") == 0)
                 bad = copystr(c->default_provider,
                               sizeof c->default_provider, val);
-            else if (strcmp(key, "model") == 0)
-                bad = copystr(c->model, sizeof c->model, val);
             else if (strcmp(key, "system") == 0)
                 bad = copystr(c->system, sizeof c->system, val);
             else if (strcmp(key, "max_history") == 0) {
@@ -192,6 +190,8 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
                 bad = copystr(prov->url, sizeof prov->url, val);
             else if (strcmp(key, "key") == 0)
                 bad = copystr(prov->key, sizeof prov->key, val);
+            else if (strcmp(key, "model") == 0)
+                bad = copystr(prov->model, sizeof prov->model, val);
             if (bad) {
                 seterr(err, errlen, "value too long", lineno);
                 return -1;
@@ -303,7 +303,38 @@ static int ensure_dir_for_file(const char *path, char *err, size_t errlen)
     return 0;
 }
 
-int config_save_model(const char *model, char *err, size_t errlen)
+/* Does the section header line (already trimmed, without brackets) name
+ * the provider we are looking for? */
+static int is_provider_section(char *s, const char *provider)
+{
+    char *q1, *q2;
+
+    if (strncmp(s, "provider", 8) != 0)
+        return 0;
+    q1 = strchr(s, '"');
+    q2 = q1 ? strchr(q1 + 1, '"') : NULL;
+    if (!q1 || !q2)
+        return 0;
+    *q2 = '\0';
+    return strcmp(q1 + 1, provider) == 0;
+}
+
+/* Inserts "model = <model>\n" into out at position at (so the line lands
+ * right after the section's last key, before any trailing blank lines). */
+static void insert_model_line(buf_t *out, size_t at, const char *model)
+{
+    buf_t tail;
+
+    buf_init(&tail);
+    buf_append(&tail, out->data + at, out->len - at);
+    out->len = at;
+    buf_printf(out, "model = %s\n", model);
+    buf_append(out, tail.data, tail.len);
+    buf_free(&tail);
+}
+
+int config_save_model(const char *provider, const char *model,
+                      char *err, size_t errlen)
 {
     char path[512];
     char tmppath[520];
@@ -311,16 +342,23 @@ int config_save_model(const char *model, char *err, size_t errlen)
     buf_t old;
     buf_t out;
     const char *p;
-    int in_defaults = 0;
-    int found_defaults = 0;
+    size_t insert_at = 0;  /* end of the target section's last key line */
+    int in_target = 0;
+    int found_target = 0;
     int found_model = 0;
 
+    if (!provider || !*provider) {
+        if (err && errlen)
+            snprintf(err, errlen, "no provider section to save the model "
+                     "in (PIKI_BASE_URL?); set it in the config");
+        return -1;
+    }
     if (!model || !*model) {
         if (err && errlen)
             snprintf(err, errlen, "model is empty");
         return -1;
     }
-    if (strlen(model) >= sizeof(((config_t *)0)->model)) {
+    if (strlen(model) >= sizeof(((cfg_provider *)0)->model)) {
         if (err && errlen)
             snprintf(err, errlen, "model name too long");
         return -1;
@@ -349,7 +387,17 @@ int config_save_model(const char *model, char *err, size_t errlen)
     buf_init(&out);
 
     if (!old.data || !old.len) {
-        buf_printf(&out, "[defaults]\nmodel = %s\n", model);
+        if (strcmp(provider, "openrouter") != 0) {
+            if (err && errlen)
+                snprintf(err, errlen, "provider %s is not in the config",
+                         provider);
+            buf_free(&old);
+            buf_free(&out);
+            return -1;
+        }
+        buf_printf(&out, "[provider \"openrouter\"]\n"
+                   "url = https://openrouter.ai/api/v1\n"
+                   "model = %s\n", model);
         goto write;
     }
 
@@ -379,32 +427,31 @@ int config_save_model(const char *model, char *err, size_t errlen)
 
         s = trim(copy);
         if (*s == '[') {
-            /* If we are leaving [defaults] without having seen model, insert it. */
-            if (in_defaults && !found_model) {
-                buf_printf(&out, "model = %s\n", model);
+            /* leaving the target section without a model line: insert it */
+            if (in_target && !found_model) {
+                insert_model_line(&out, insert_at, model);
                 found_model = 1;
             }
-            /* Determine section type. */
             {
                 char *rb = strchr(s, ']');
-                int is_defaults = 0;
+                int is_target = 0;
 
                 if (rb) {
                     *rb = '\0';
                     s = trim(s + 1);
-                    if (strcmp(s, "defaults") == 0)
-                        is_defaults = 1;
+                    is_target = is_provider_section(s, provider);
                 }
-                in_defaults = is_defaults;
-                if (is_defaults)
-                    found_defaults = 1;
+                in_target = is_target;
+                if (is_target)
+                    found_target = 1;
             }
             buf_append(&out, line, len);
             buf_putc(&out, '\n');
+            insert_at = out.len;
             continue;
         }
 
-        if (in_defaults && *s && *s != '#' && *s != ';') {
+        if (in_target && *s && *s != '#' && *s != ';') {
             char *eq = strchr(s, '=');
             if (eq) {
                 char *key;
@@ -420,20 +467,27 @@ int config_save_model(const char *model, char *err, size_t errlen)
         }
         buf_append(&out, line, len);
         buf_putc(&out, '\n');
+        if (in_target && *s)        /* last non-blank line of the section */
+            insert_at = out.len;
     }
 
-    if (!found_defaults) {
+    if (!found_target) {
+        if (strcmp(provider, "openrouter") != 0) {
+            if (err && errlen)
+                snprintf(err, errlen, "provider %s is not in the config",
+                         provider);
+            buf_free(&old);
+            buf_free(&out);
+            return -1;
+        }
         if (out.len && out.data[out.len - 1] != '\n')
             buf_putc(&out, '\n');
-        buf_printf(&out, "[defaults]\nmodel = %s\n", model);
-    } else if (found_defaults && !found_model) {
-        if (in_defaults) {
-            /* Still inside [defaults] at EOF. */
-            buf_printf(&out, "model = %s\n", model);
-        } else {
-            /* Should have been inserted before next section, but fallback. */
-            buf_printf(&out, "model = %s\n", model);
-        }
+        buf_printf(&out, "[provider \"openrouter\"]\n"
+                   "url = https://openrouter.ai/api/v1\n"
+                   "model = %s\n", model);
+    } else if (!found_model) {
+        /* target section runs to EOF */
+        insert_model_line(&out, insert_at, model);
     }
 
 write:

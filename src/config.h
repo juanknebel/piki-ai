@@ -11,10 +11,10 @@
  *
  *   [provider "ollama"]
  *   url = http://192.168.1.10:11434/v1    # no key: plain HTTP
+ *   model = llama3.2                      # default model when using it
  *
  *   [defaults]
  *   provider = openrouter
- *   model = anthropic/claude-haiku-4.5
  *   system = Respond in English.
  *   max_history = 40           # messages sent per turn
  *   max_memory = 256           # KB of history kept in RAM
@@ -31,13 +31,13 @@ typedef struct {
     char name[32];
     char url[256];
     char key[256];
+    char model[128];          /* default model for this provider ("" = none) */
 } cfg_provider;
 
 typedef struct {
     cfg_provider providers[CFG_MAX_PROVIDERS];
     size_t nproviders;
     char default_provider[32];
-    char model[128];
     char system[1024];
     long max_history;         /* messages kept in the sent window */
     long max_memory;          /* KB of history kept in RAM */
@@ -54,10 +54,12 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen);
 /* Reads the standard path. 0 ok, 1 no file, -1 parse error. */
 int config_load(config_t *c, char *err, size_t errlen);
 
-/* Persists the default model to the config file. Creates the file and its
- * directory if needed, preserving existing providers and keys.
- * 0 ok, -1 error (description in err). */
-int config_save_model(const char *model, char *err, size_t errlen);
+/* Persists model as the default of the given provider section, preserving
+ * the rest of the file. If the section is missing it is created only for
+ * the built-in "openrouter" (any other provider must already be in the
+ * config). 0 ok, -1 error (description in err). */
+int config_save_model(const char *provider, const char *model,
+                      char *err, size_t errlen);
 
 cfg_provider *config_provider(config_t *c, const char *name);
 

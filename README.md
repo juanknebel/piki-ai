@@ -15,8 +15,9 @@ local servers like **Ollama** or **llama.cpp** (`llama-server`).
   certificate store has grown old.
 - Streaming responses token by token; `Ctrl-C` cancels without closing the
   program.
-- Line editor with history, optional tool use (read/write files, run
-  commands with confirmation), and save/load conversations.
+- Line editor with history and multi-line aware editing, tool use enabled
+  by default (read/write files, run commands with confirmation), and
+  save/load conversations.
 
 ![piki chatting in the terminal](screenshots/01-chat.png)
 
@@ -105,10 +106,10 @@ key = sk-or-...
 
 [provider "ollama"]
 url = http://192.168.1.10:11434/v1    ; no key: plain HTTP, no auth
+model = llama3.2                      ; default model for this provider
 
 [defaults]
 provider = openrouter
-model = anthropic/claude-haiku-4.5
 system = Answer in English.
 max_history = 40           ; messages sent per turn
 max_memory = 256           ; KB of history kept in RAM
@@ -116,6 +117,11 @@ max_context_tokens = 8000  ; rough cap on what is sent per turn
 max_agent_steps = 12       ; tool-call rounds before asking to continue
 check_updates = 1          ; 0 disables the daily release check
 ```
+
+The default model is per provider: each `[provider "..."]` section may set
+its own `model`, used when that provider is selected and no `-m` was given
+(model names rarely make sense across providers, so there is no global
+default). `/model save` writes it into the active provider's section.
 
 `max_memory` and `max_context_tokens` are two different limits.
 `max_memory` caps what is **kept in RAM**: once past it the oldest messages
@@ -190,7 +196,7 @@ to turn on and `-w` is ignored with a warning, instead of sending a
 
 ```
 /model [id]         show or change the model
-/model save         save the current model as default (writes ~/.config/piki/config)
+/model save         save the model as the provider's default (writes the config)
 /model <id> save    change to <id> and save it as default
 /default [id]       alias for /model save
 /models             list the provider's models

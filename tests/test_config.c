@@ -42,6 +42,7 @@ int main(void)
         "\n"
         "[provider \"ollama\"]\n"
         "  url   =   http://192.168.1.10:11434/v1  \n"
+        "model = qwen2.5:3b\n"
         "\n"
         "[defaults]\n"
         "provider = ollama\n"
@@ -58,9 +59,10 @@ int main(void)
     CHECK(strcmp(config_provider(&c, "ollama")->url,
                  "http://192.168.1.10:11434/v1") == 0);
     CHECK(config_provider(&c, "ollama")->key[0] == '\0');
+    CHECK(strcmp(config_provider(&c, "ollama")->model, "qwen2.5:3b") == 0);
+    CHECK(config_provider(&c, "openrouter")->model[0] == '\0');
     CHECK(config_provider(&c, "inexistente") == NULL);
     CHECK(strcmp(c.default_provider, "ollama") == 0);
-    CHECK(strcmp(c.model, "llama3.2") == 0);
     CHECK(strcmp(c.system, "Responde en castellano rioplatense.") == 0);
     CHECK(c.max_history == 20);
     CHECK(c.max_memory == 512);
@@ -70,7 +72,7 @@ int main(void)
     /* empty: defaults remain */
     config_defaults(&c);
     CHECK(config_parse(&c, "", err, sizeof err) == 0);
-    CHECK(c.nproviders == 0 && c.max_history == 40 && !c.model[0]);
+    CHECK(c.nproviders == 0 && c.max_history == 40);
     CHECK(c.max_memory == 256 && c.max_context_tokens == 8000);
     CHECK(c.max_agent_steps == 12);
     CHECK(c.check_updates == 1);
@@ -90,8 +92,8 @@ int main(void)
         "[seccion_rara]\n"
         "a = b\n"
         "[defaults]\n"
-        "model = gpt-x\n", err, sizeof err) == 0);
-    CHECK(strcmp(c.model, "gpt-x") == 0);
+        "system = gpt-x\n", err, sizeof err) == 0);
+    CHECK(strcmp(c.system, "gpt-x") == 0);
 
     /* value with '=' inside (only splits on the first) */
     config_defaults(&c);
