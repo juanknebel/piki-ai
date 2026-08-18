@@ -554,6 +554,8 @@ static void repl_help(int tools_on, int web_on)
            "  /web                toggle web search (now: %s)\n"
            "  /system [text]      show or set the system prompt ('-' removes it)\n"
            "  /trim <n>           keep only the last n messages\n"
+           "  /retry              regenerate the last reply\n"
+           "  /undo               drop the last exchange\n"
            "  /paste              compose a multi-line message (end with '.')\n"
            "  /chats              list the named chats\n"
            "  /switch <name>      switch to a named chat (creates it if new)\n"
@@ -856,6 +858,25 @@ static int handle_command(repl_state *st, char *line)
             printf("%skept the last %lu messages%s\n", C_DIM,
                    (unsigned long)st->chat->n, C_RESET);
         }
+    } else if (strcmp(cmd, "/retry") == 0 || strcmp(cmd, "/undo") == 0) {
+        /* Both need the tail to be a user + assistant pair; anything else
+         * (empty chat, interrupted turn already popped) is a no-op. */
+        chat_t *c = st->chat;
+
+        if (c->n < 2 ||
+            strcmp(c->msgs[c->n - 1].role, "assistant") != 0 ||
+            strcmp(c->msgs[c->n - 2].role, "user") != 0) {
+            printf("%snothing to %s%s\n", C_DIM, cmd + 1, C_RESET);
+        } else if (strcmp(cmd, "/undo") == 0) {
+            chat_pop(c);
+            chat_pop(c);
+            chat_autosave(st);
+            printf("%sundid the last exchange (%lu messages left)%s\n",
+                   C_DIM, (unsigned long)c->n, C_RESET);
+        } else {
+            chat_pop(c);   /* drop the reply, keep the user message */
+            send_user_turn(st);
+        }
     } else if (strcmp(cmd, "/paste") == 0) {
         buf_t msg;
         char tmp[4096];
@@ -1147,7 +1168,8 @@ static void handle_bang(repl_state *st, char *line)
 /* REPL commands offered by Tab completion. */
 static const char *const REPL_COMMANDS[] = {
     "/model", "/models", "/default", "/save-model", "/tools", "/web",
-    "/system", "/trim", "/paste", "/chats", "/switch", "/rename", "/delete",
+    "/system", "/trim", "/retry", "/undo", "/paste",
+    "/chats", "/switch", "/rename", "/delete",
     "/save", "/load", "/export", "/new", "/help", "/quit", NULL
 };
 

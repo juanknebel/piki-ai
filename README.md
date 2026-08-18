@@ -227,6 +227,8 @@ into the same `api_web_kind` seam in `src/api.h`.
 /web                enable/disable web search
 /system [text]      show or set the system prompt ('-' removes it)
 /trim <n>           keep only the last n messages (shrinks the context)
+/retry              regenerate the last reply (asks the model again)
+/undo               drop the last exchange (your message and the reply)
 /paste              compose a multi-line message (end with a single '.' line)
 /chats              list the named chats
 /switch <name>      switch to a named chat (creates it if new)
