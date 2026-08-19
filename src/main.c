@@ -34,6 +34,7 @@
 #include "term.h"
 #include "tools.h"
 #include "version.h"
+#include "web.h"
 
 #define PIKI_AUTHOR   "Juan Knebel <juanknebel@gmail.com>"
 #define PIKI_REPO     "https://github.com/juanknebel/piki-ai"
@@ -80,13 +81,17 @@ static int provider_web_kind(const char *host, const char *cfg_web)
             return API_WEB_PLUGIN;
         if (strcmp(cfg_web, "responses") == 0)
             return API_WEB_RESPONSES;
+        if (strcmp(cfg_web, "local") == 0)
+            return API_WEB_LOCAL;
         return API_WEB_NONE;
     }
     if (strstr(host, "openrouter.ai"))
         return API_WEB_PLUGIN;
     if (strstr(host, "meta.ai"))
         return API_WEB_RESPONSES;
-    return API_WEB_NONE;
+    /* anyone else gets piki's client-side search (web_search = none
+     * in the provider's config section opts out) */
+    return API_WEB_LOCAL;
 }
 
 /* Parses http[s]://host[:port][/base] into pv. 0 ok, -1 invalid. */
@@ -312,6 +317,10 @@ static int ask_yn(void)
 static char always_ok[MAX_ALWAYS_OK][32];
 static size_t n_always_ok;
 
+/* Client-side web search config ([search] section), process-constant
+ * after startup like the always-allow list below. */
+static web_cfg g_websearch;
+
 static int always_allowed(const char *tool)
 {
     size_t i;
@@ -351,8 +360,12 @@ static int confirm(const char *what)
  * not an error: the text produced so far is kept as the reply so the next
  * turn knows what the agent was doing. Returns 0 ok, -1 error (err),
  * -2 interrupted. Leaves the final response in final (for the history). */
+/* One agent turn. plugin_web rides the OpenRouter web plugin on the
+ * request; with_tools/with_web_tools pick which tools the model gets
+ * (at least one must be set). */
 static int agent_turn(const provider_t *pv, const char *model,
-                      const chat_t *chat, send_limits lim, int web,
+                      const chat_t *chat, send_limits lim, int plugin_web,
+                      int with_tools, int with_web_tools,
                       long max_steps, token_usage *usage, buf_t *final,
                       char *err, size_t errlen)
 {
@@ -371,7 +384,13 @@ static int agent_turn(const provider_t *pv, const char *model,
     }
     buf_init(&schema);
     buf_putc(&schema, '[');
-    buf_puts(&schema, TOOLS_ITEMS);
+    if (with_tools)
+        buf_puts(&schema, TOOLS_ITEMS);
+    if (with_web_tools) {
+        if (with_tools)
+            buf_putc(&schema, ',');
+        buf_puts(&schema, WEB_TOOLS_ITEMS);
+    }
     buf_putc(&schema, ']');
 
     /* initial message array from the history window */
@@ -426,7 +445,8 @@ static int agent_turn(const provider_t *pv, const char *model,
         {
             token_usage step_u = {0, 0};
 
-            rc = api_agent_turn(pv, model, msgs.data, schema.data, web,
+            rc = api_agent_turn(pv, model, msgs.data, schema.data,
+                                plugin_web,
                                 &step_u, &turn, err, errlen);
             if (usage) {
                 usage->prompt_tokens += step_u.prompt_tokens;
@@ -483,14 +503,22 @@ static int agent_turn(const provider_t *pv, const char *model,
             api_tool_call *tc = &turn.calls[j];
             buf_t desc, result;
             int allowed = 1;
+            int is_web = web_tool_is(tc->name);
 
             buf_init(&desc);
             buf_init(&result);
-            tool_describe(tc->name, tc->arguments, &desc);
+            if (is_web)
+                web_tool_describe(tc->name, tc->arguments, &desc);
+            else
+                tool_describe(tc->name, tc->arguments, &desc);
             printf("%s· %s%s\n", C_DIM, desc.data, C_RESET);
             fflush(stdout);
 
-            if (tool_is_dangerous(tc->name) &&
+            /* web tools always confirm: fetched pages are untrusted
+             * input that can steer the model into exfiltrating data
+             * through the next search/fetch, and the prompt shows the
+             * exact query or URL */
+            if ((is_web || tool_is_dangerous(tc->name)) &&
                 !always_allowed(tc->name)) {
                 int c3 = confirm(desc.data);
 
@@ -503,7 +531,11 @@ static int agent_turn(const provider_t *pv, const char *model,
             }
 
             if (allowed) {
-                tool_run(tc->name, tc->arguments, &result);
+                if (is_web)
+                    web_tool_run(&g_websearch, tc->name, tc->arguments,
+                                 &result);
+                else
+                    tool_run(tc->name, tc->arguments, &result);
             } else {
                 buf_puts(&result,
                          "the user declined to run this action");
@@ -547,7 +579,9 @@ static void repl_help(int tools_on, int web_on)
            "  /default [id]       alias for /model save\n"
            "  /models             list the provider's models\n"
            "  /tools              toggle tool use (now: %s)\n"
-           "  /web                toggle web search (now: %s)\n"
+           "  /web                toggle web search (now: %s; on providers\n"
+           "                      without server-side search piki's own\n"
+           "                      web_search/fetch_url tools are used)\n"
            "  /system [text]      show or set the system prompt ('-' removes it)\n"
            "  /trim <n>           keep only the last n messages\n"
            "  /compact            summarize old history to shrink the context\n"
@@ -741,14 +775,18 @@ static void send_user_turn(repl_state *st)
             chat_pop(st->chat);
         }
         buf_free(&final);
-    } else if (st->tools_on) {
+    } else if (st->tools_on ||
+               (st->web && st->pv->web_kind == API_WEB_LOCAL)) {
         int plugin_web = st->web &&
                          st->pv->web_kind == API_WEB_PLUGIN;
+        int web_tools = st->web &&
+                        st->pv->web_kind == API_WEB_LOCAL;
         buf_t final;
 
         buf_init(&final);
         rc = agent_turn(st->pv, st->model, st->chat,
-                        st->lim, plugin_web, st->max_agent_steps,
+                        st->lim, plugin_web, st->tools_on, web_tools,
+                        st->max_agent_steps,
                         &tu, &final, err, sizeof err);
         if (rc == 0) {
             chat_add(st->chat, "assistant", final.data);
@@ -1045,7 +1083,8 @@ static int handle_command(repl_state *st, char *line)
                st->tools_on ? "on" : "off", C_RESET);
     } else if (strcmp(cmd, "/web") == 0) {
         if (!st->web && st->pv->web_kind == API_WEB_NONE) {
-            printf("%s%s has no server-side web search%s\n",
+            printf("%sweb search is disabled for %s "
+                   "(web_search = none)%s\n",
                    C_DIM, st->pv->host, C_RESET);
         } else {
             st->web = !st->web;
@@ -1054,6 +1093,13 @@ static int handle_command(repl_state *st, char *line)
             if (st->web && st->pv->web_kind == API_WEB_RESPONSES)
                 printf("%sweb turns use the Responses API: no streaming "
                        "and no local tools while on%s\n", C_DIM, C_RESET);
+            if (st->web && st->pv->web_kind == API_WEB_LOCAL)
+                printf("%sclient-side web search (%s): the model gets "
+                       "the web_search and fetch_url tools; web turns "
+                       "use the agent loop (no streaming)%s\n", C_DIM,
+                       g_websearch.engine == WEB_ENGINE_BRAVE
+                           ? "brave" : "duckduckgo",
+                       C_RESET);
         }
     } else if (strcmp(cmd, "/model") == 0) {
         if (arg && *arg) {
@@ -1859,10 +1905,16 @@ int main(int argc, char **argv)
                  prov_model ? prov_model : DEFAULT_MODEL);
 
     if (web && pv.web_kind == API_WEB_NONE) {
-        fprintf(stderr, "piki: -w ignored: %s has no server-side "
-                "web search\n", pv.host);
+        fprintf(stderr, "piki: -w ignored: web search is disabled "
+                "for %s (web_search = none)\n", pv.host);
         web = 0;
     }
+
+    /* client-side web search config ([search] section) */
+    g_websearch.engine = strcmp(cfg.search_engine, "brave") == 0
+                             ? WEB_ENGINE_BRAVE : WEB_ENGINE_DDG;
+    snprintf(g_websearch.key, sizeof g_websearch.key, "%s",
+             cfg.search_key);
 
     /* quick health probe for local providers: 1s connect, non-blocking */
     {
@@ -1931,12 +1983,15 @@ int main(int argc, char **argv)
             rc = responses_turn(&pv, model, &chat, lim, NULL, &final,
                                 err, sizeof err);
             buf_free(&final);
-        } else if (tools_on) {
+        } else if (tools_on ||
+                   (web && pv.web_kind == API_WEB_LOCAL)) {
             buf_t final;
 
             buf_init(&final);
             rc = agent_turn(&pv, model, &chat, lim,
                             web && pv.web_kind == API_WEB_PLUGIN,
+                            tools_on,
+                            web && pv.web_kind == API_WEB_LOCAL,
                             cfg.max_agent_steps, NULL, &final,
                             err, sizeof err);
             buf_free(&final);

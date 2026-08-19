@@ -14,8 +14,10 @@ typedef enum {
     API_WEB_NONE = 0,   /* provider has no server-side web search */
     API_WEB_PLUGIN,     /* OpenRouter: "plugins":[{"id":"web"}] on
                            chat/completions (streams like normal chat) */
-    API_WEB_RESPONSES   /* OpenAI/Meta Responses API: POST {base}/responses
+    API_WEB_RESPONSES,  /* OpenAI/Meta Responses API: POST {base}/responses
                            with tools [{"type":"web_search"}] */
+    API_WEB_LOCAL       /* client-side: piki's own web_search/fetch_url
+                           agent tools (web.h), no server support needed */
 } api_web_kind;
 
 /* An OpenAI-compatible endpoint: OpenRouter, and in the future Ollama /

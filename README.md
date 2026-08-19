@@ -18,8 +18,11 @@ Talks to any OpenAI-compatible API endpoint: OpenRouter (by default),
   program.
 - The TLS connection is kept alive and reused between turns, so on slow
   hardware only the first message of a session pays for the handshake.
-- Server-side web search (`/web`) on OpenRouter and Meta Model API, with
-  the sources cited under each answer.
+- Web search (`/web`) on any provider: server-side on OpenRouter and
+  Meta Model API (sources cited under each answer), and client-side
+  everywhere else through piki's own `web_search` and `fetch_url` agent
+  tools (DuckDuckGo, no key needed) — so even a local Ollama model can
+  answer with fresh information.
 - Line editor with history and multi-line aware editing, tool use enabled
   by default (read/write files, run commands with confirmation), and
   save/load conversations.
@@ -117,8 +120,12 @@ model = llama3.2                      ; default model for this provider
 url = https://api.meta.ai/v1
 key = ...
 model = muse-spark-1.2
-web_search = responses                ; optional: none|plugin|responses
+web_search = responses                ; optional: none|plugin|responses|local
                                       ; (detected by host when omitted)
+
+[search]                   ; client-side web search (the web_search tool)
+engine = ddg               ; ddg | brave
+# key =                    ; API key (brave; not implemented yet)
 
 [defaults]
 provider = openrouter
@@ -205,12 +212,11 @@ internet connection nothing is shown and nothing waits. Disable it with
 
 ### Web search
 
-`-w` (or `/web` in the REPL) enables server-side web search, so the model
-can answer with up-to-date information. When active, the REPL prompt
-changes to `web>` and the banner shows `[web]`. Providers bill searches
-separately from tokens. How the search is requested depends on the
-provider, detected by host or forced with `web_search` in its config
-section (`none`, `plugin` or `responses`):
+`-w` (or `/web` in the REPL) enables web search, so the model can answer
+with up-to-date information. When active, the REPL prompt changes to
+`web>` and the banner shows `[web]`. How the search happens depends on
+the provider, detected by host or forced with `web_search` in its config
+section (`none`, `plugin`, `responses` or `local`):
 
 - **OpenRouter** (`plugin`): the web plugin rides on the normal
   chat/completions request, so streaming and tool use keep working.
@@ -223,11 +229,29 @@ section (`none`, `plugin` or `responses`):
   non-streaming (like agent turns), print their sources underneath, and
   skip piki's local tools while web is on. Any OpenAI-compatible host
   with a Responses endpoint works via `web_search = responses`.
+- **Everyone else** (`local`): piki does the searching itself. The model
+  gets two extra agent tools — `web_search` (DuckDuckGo, no key or
+  account needed) and `fetch_url` (downloads a page and hands back its
+  readable text, following redirects) — and decides when to use them.
+  Works with any provider, including a local Ollama or llama-server.
+  These turns go through the agent loop, so they are non-streaming.
 
-On a provider with no server-side search, `/web` refuses to turn on and
-`-w` is ignored with a warning, instead of sending fields the server
-would reject. New search mechanisms (e.g. Anthropic's server tools) plug
-into the same `api_web_kind` seam in `src/api.h`.
+Server-side searches are billed by the provider separately from tokens.
+Client-side search is free but best-effort: DuckDuckGo may rate-limit or
+serve a CAPTCHA (especially from datacenter IPs), which piki reports to
+the model as an error. The `[search]` config section selects the engine
+(`ddg` today; `brave` with an API `key` is scaffolded but not
+implemented yet).
+
+Because fetched pages are untrusted input (a malicious page can try to
+steer the model into leaking conversation data through the next search
+or fetch), both tools ask for confirmation showing the exact query or
+URL — answer `a` to allow that tool for the rest of the session, like
+any dangerous tool.
+
+`web_search = none` in a provider's section disables `/web` and `-w`
+entirely for it. New server-side mechanisms (e.g. Anthropic's server
+tools) plug into the same `api_web_kind` seam in `src/api.h`.
 
 ![the web> prompt and the [web] tag](screenshots/06-web.png)
 
@@ -337,6 +361,9 @@ deserves more caution than the file tools):
   and no risk of mangling the rest.
 - `write_file` — write/overwrite a whole file.
 - `run_command` — run a shell command.
+- `web_search` / `fetch_url` — only offered while `/web` is on with
+  client-side search (see Web search above); they confirm too, because
+  fetched pages are untrusted input.
 
 ![read-only tool running unattended](screenshots/04-tools.png)
 
