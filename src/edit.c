@@ -482,7 +482,11 @@ int edit_readline(const char *prompt, buf_t *out, history *h,
                 continue;
             if (read(STDIN_FILENO, &seq[1], 1) != 1)
                 continue;
-            if (seq[0] == '[') {
+            /* Arrow/Home/End arrive as CSI (ESC [ letter) in the
+             * terminal's normal cursor-key mode, or as SS3 (ESC O
+             * letter) in application cursor-key mode -- Haiku's
+             * Terminal defaults to the latter. Accept both. */
+            if (seq[0] == '[' || seq[0] == 'O') {
                 switch (seq[1]) {
                 case 'C': el_right(&e); redraw(prompt, &e); break;
                 case 'D': el_left(&e);  redraw(prompt, &e); break;
@@ -512,7 +516,8 @@ int edit_readline(const char *prompt, buf_t *out, history *h,
                 case '3': { /* Delete: ESC [ 3 ~ */
                     unsigned char tilde;
 
-                    if (read(STDIN_FILENO, &tilde, 1) == 1 &&
+                    if (seq[0] == '[' &&
+                        read(STDIN_FILENO, &tilde, 1) == 1 &&
                         tilde == '~') {
                         el_delete(&e);
                         redraw(prompt, &e);

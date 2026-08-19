@@ -55,7 +55,10 @@ api     OpenAI-compatible layer: chat_stream, agent_turn, responses_turn,
 chat    message history + context window (chat_window truncates)
 config  INI parser (~/.config/piki/config)
 edit    raw-termios line editor + history + Tab completion (via a callback;
-        pure buffer ops are testable)
+        pure buffer ops are testable). Arrow/Home/End keys are accepted
+        as both CSI (ESC [ letter, the common case) and SS3 (ESC O
+        letter, application cursor-key mode) -- Haiku's Terminal
+        defaults to SS3.
 term    line reading; delegates to edit on a TTY, falls back to fgets
 tools   agent tools: read-only (read_file, list_files, search_files) and
         confirmed (edit_file, write_file, run_command)
