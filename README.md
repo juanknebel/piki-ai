@@ -103,9 +103,28 @@ in `deps/` (see `tools/build-release.sh`).
 On **Haiku** the build is native: `pkgman install openssl3_devel`, then
 `make` (the `-lnetwork` is added automatically).
 
+**Haiku x86 (32-bit)**: the default `cc` is the legacy gcc2 kept for BeOS
+ABI compatibility, which rejects `-std=c99`/`-Wextra`/`-MP`. Install the
+modern secondary-architecture compiler and build with it:
+
+```sh
+pkgman install openssl3_devel gcc_x86
+git clone https://github.com/juanknebel/piki-ai.git
+cd piki-ai
+make            # auto-detects gcc-x86 on Haiku x86 and uses it
+```
+
+The Makefile switches to `gcc-x86` on its own when it's installed and
+`CC` was not given explicitly; `make CC=gcc-x86` forces it if the
+auto-detection ever needs an override. This has been built and run from
+source on real 32-bit Haiku hardware.
+
 ## Configuration
 
-`~/.config/piki/config` (or `$XDG_CONFIG_HOME/piki/config`):
+`~/.config/piki/config` (or `$XDG_CONFIG_HOME/piki/config` — **on Haiku,
+`XDG_CONFIG_HOME` is set by the OS itself**, usually to
+`/boot/home/config/settings`, so the file ends up at
+`/boot/home/config/settings/piki/config` instead of under `~/.config`):
 
 ```ini
 [provider "openrouter"]

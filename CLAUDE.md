@@ -187,6 +187,11 @@ pushing triggers a GitHub Release with the static binaries attached.
 ## Platform status
 
 Validated on real old 32-bit (i686) hardware — an Acer Aspire One netbook
-with 1 GB RAM runs the static i686 release binary. Still pending: the native Haiku build (the code is
-prepared, Makefile adds `-lnetwork` on Haiku, but it has never been
-compiled/run there; needs the actual machine/VM).
+with 1 GB RAM runs the static i686 release binary. The native Haiku
+build (x86, 32-bit) has been built from source on real hardware: the
+default `cc` on Haiku x86 is the legacy gcc2 kept for BeOS ABI
+compatibility (no `-std=c99`/`-Wextra`/`-MP`), so the Makefile swaps to
+the modern `gcc-x86` secondary-architecture compiler automatically
+(`pkgman install gcc_x86` if it's missing) unless `CC` is set
+explicitly. Still pending: running the compiled binary end-to-end there
+(chatting, TLS, tool use).

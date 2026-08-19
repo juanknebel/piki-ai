@@ -7,7 +7,10 @@
 #   make release  static release binaries (dist/piki-linux-{x86_64,i686})
 #                 via tools/build-release.sh: musl + static OpenSSL, with the
 #                 i686-linux-musl toolchain and the tarballs cached in deps/.
-# On Haiku the build is native; the -lnetwork is added automatically.
+# On Haiku the build is native; the -lnetwork is added automatically, and
+# on x86 (32-bit) the legacy gcc2 (kept for BeOS ABI compat, no -std=c99/
+# -Wextra/-MP) is swapped for the modern gcc-x86 secondary compiler
+# unless CC was given explicitly (`pkgman install gcc_x86` if missing).
 
 CC       ?= cc
 CFLAGS   ?= -O2
@@ -17,6 +20,12 @@ LIBS     := -lssl -lcrypto
 
 ifeq ($(shell uname),Haiku)
 LIBS += -lnetwork
+ifeq ($(origin CC),file)
+HAIKU_GCC_X86 := $(shell command -v gcc-x86 2>/dev/null)
+ifneq ($(HAIKU_GCC_X86),)
+CC := $(HAIKU_GCC_X86)
+endif
+endif
 endif
 
 B    := build

@@ -131,9 +131,22 @@ jobs:
 
           **Haiku 32-bit (x86):** no prebuilt binary — GitHub Actions can only
           virtualize the x86-64 flavor of Haiku, so the 32-bit build must be
-          compiled from source on the target machine: install
-          `openssl3_devel`, clone this repository (or grab the source tarball
-          below), and run `make`.
+          compiled from source on the target machine:
+
+          ```sh
+          pkgman install openssl3_devel gcc_x86
+          git clone https://github.com/${GH_REPO}.git
+          cd piki-ai
+          make
+          ```
+
+          The default `cc` on Haiku x86 is the legacy gcc2 kept for BeOS ABI
+          compatibility and cannot build piki (no `-std=c99`); the `gcc_x86`
+          package provides the modern compiler the Makefile switches to on
+          its own. This has been built and run from source on real 32-bit
+          Haiku hardware. Also on Haiku, `XDG_CONFIG_HOME` is set by the OS
+          (usually to `/boot/home/config/settings`), so the config file
+          lives at `.../settings/piki/config` rather than under `~/.config`.
           EOF
           sed -i "s|\${GH_REPO}|$GH_REPO|" notes.md
         env:
