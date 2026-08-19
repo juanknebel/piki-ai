@@ -20,8 +20,13 @@ LIBS     := -lssl -lcrypto
 
 ifeq ($(shell uname),Haiku)
 LIBS += -lnetwork
-ifeq ($(origin CC),file)
-HAIKU_GCC_X86 := $(shell command -v gcc-x86 2>/dev/null)
+ifeq ($(origin CC),default)
+# Checked as plain files (not via a shell "command -v"/"which"), since
+# make's $(shell ...) subshell is not guaranteed to have the same PATH
+# or the same builtins as the interactive one.
+HAIKU_GCC_X86 := $(firstword $(wildcard /bin/gcc-x86 \
+                                        /boot/system/bin/gcc-x86 \
+                                        /boot/system/non-packaged/bin/gcc-x86))
 ifneq ($(HAIKU_GCC_X86),)
 CC := $(HAIKU_GCC_X86)
 endif
