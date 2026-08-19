@@ -12,6 +12,16 @@
 
 /* --- header parsing ------------------------------------------------- */
 
+/* Copies a header value (already left-trimmed, not NUL-terminated),
+ * truncating to fit. */
+static void copy_value(char *dst, size_t cap, const char *v, size_t vlen)
+{
+    if (vlen >= cap)
+        vlen = cap - 1;
+    memcpy(dst, v, vlen);
+    dst[vlen] = '\0';
+}
+
 static int value_has(const char *v, size_t vlen, const char *tok)
 {
     size_t tlen = strlen(tok), i;
@@ -30,6 +40,8 @@ int http_parse_meta(const char *hdr, http_meta *m)
     m->content_length = -1;
     m->chunked = 0;
     m->conn_close = 0;
+    m->location[0] = '\0';
+    m->content_type[0] = '\0';
 
     if (strncmp(hdr, "HTTP/1.", 7) != 0)
         return -1;
@@ -71,6 +83,14 @@ int http_parse_meta(const char *hdr, http_meta *m)
                      strncasecmp(p, "Connection", 10) == 0 &&
                      value_has(v, (size_t)(p + len - v), "close"))
                 m->conn_close = 1;
+            else if (nlen == 8 &&
+                     strncasecmp(p, "Location", 8) == 0)
+                copy_value(m->location, sizeof m->location,
+                           v, (size_t)(p + len - v));
+            else if (nlen == 12 &&
+                     strncasecmp(p, "Content-Type", 12) == 0)
+                copy_value(m->content_type, sizeof m->content_type,
+                           v, (size_t)(p + len - v));
         }
         p = nl;
     }
@@ -182,6 +202,7 @@ ssize_t chunk_feed(chunk_dec *d, const char *in, size_t n, buf_t *out)
 
 static int send_request(net_conn *c, const char *method, const char *host,
                         const char *path, const char *bearer,
+                        const char *accept, const char *extra,
                         const char *body, size_t bodylen, int keep_alive)
 {
     buf_t req;
@@ -192,10 +213,13 @@ static int send_request(net_conn *c, const char *method, const char *host,
                "%s %s HTTP/1.1\r\n"
                "Host: %s\r\n"
                "User-Agent: piki/" PIKI_VERSION "\r\n"
-               "Accept: application/json\r\n",
-               method, path, host);
+               "Accept: %s\r\n",
+               method, path, host,
+               accept ? accept : "application/json");
     if (bearer)
         buf_printf(&req, "Authorization: Bearer %s\r\n", bearer);
+    if (extra)
+        buf_puts(&req, extra);   /* full "Name: value\r\n" lines */
     if (body) {
         buf_puts(&req, "Content-Type: application/json\r\n");
         buf_printf(&req, "Content-Length: %lu\r\n",
@@ -217,14 +241,22 @@ int http_post(net_conn *c, const char *host, const char *path,
               const char *bearer, const char *body, size_t bodylen,
               int keep_alive)
 {
-    return send_request(c, "POST", host, path, bearer, body, bodylen,
-                        keep_alive);
+    return send_request(c, "POST", host, path, bearer, NULL, NULL,
+                        body, bodylen, keep_alive);
 }
 
 int http_get(net_conn *c, const char *host, const char *path,
              const char *bearer, int keep_alive)
 {
-    return send_request(c, "GET", host, path, bearer, NULL, 0, keep_alive);
+    return send_request(c, "GET", host, path, bearer, NULL, NULL,
+                        NULL, 0, keep_alive);
+}
+
+int http_get_hdr(net_conn *c, const char *host, const char *path,
+                 const char *accept, const char *extra, int keep_alive)
+{
+    return send_request(c, "GET", host, path, NULL, accept, extra,
+                        NULL, 0, keep_alive);
 }
 
 /* --- response ----------------------------------------------------------- */

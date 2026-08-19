@@ -90,6 +90,31 @@ int main(void)
         "HTTP/1.1 200 OK\r\n\r\n", &m) == 0);
     CHECK(!m.conn_close);
 
+    /* Location and Content-Type */
+    CHECK(http_parse_meta(
+        "HTTP/1.1 301 Moved\r\n"
+        "location: https://example.com/next?x=1\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "\r\n", &m) == 0);
+    CHECK(strcmp(m.location, "https://example.com/next?x=1") == 0);
+    CHECK(strcmp(m.content_type, "text/html; charset=utf-8") == 0);
+    CHECK(http_parse_meta("HTTP/1.1 200 OK\r\n\r\n", &m) == 0);
+    CHECK(m.location[0] == '\0' && m.content_type[0] == '\0');
+
+    /* an oversized header value is truncated, not overflowed */
+    {
+        char big[700];
+        buf_t h;
+
+        memset(big, 'a', sizeof big - 1);
+        big[sizeof big - 1] = '\0';
+        buf_init(&h);
+        buf_printf(&h, "HTTP/1.1 302 Found\r\nLocation: %s\r\n\r\n", big);
+        CHECK(http_parse_meta(h.data, &m) == 0);
+        CHECK(strlen(m.location) == sizeof m.location - 1);
+        buf_free(&h);
+    }
+
     CHECK(http_parse_meta("FTP/1.1 200 OK\r\n\r\n", &m) < 0);
     CHECK(http_parse_meta("HTTP/1.1 999 X\r\n\r\n", &m) < 0);
     CHECK(http_parse_meta("HTTP/1.1\r\n\r\n", &m) < 0);

@@ -14,6 +14,8 @@ typedef struct {
     long content_length;   /* -1 if it did not come */
     int chunked;
     int conn_close;        /* the server sent Connection: close */
+    char location[512];    /* Location header ("" if absent) */
+    char content_type[64]; /* Content-Type header ("" if absent) */
 } http_meta;
 
 /* http_read_response: the server closed the connection before sending a
@@ -62,6 +64,13 @@ int http_post(net_conn *c, const char *host, const char *path,
               int keep_alive);
 int http_get(net_conn *c, const char *host, const char *path,
              const char *bearer, int keep_alive);
+
+/* GET with request-header control (web fetches, non-Bearer APIs):
+ * accept overrides the Accept header (NULL = application/json); extra
+ * is a pre-formatted block of full header lines each ending in "\r\n"
+ * (NULL = none), e.g. "X-Subscription-Token: k\r\n". */
+int http_get_hdr(net_conn *c, const char *host, const char *path,
+                 const char *accept, const char *extra, int keep_alive);
 
 /* Reads status + headers and leaves r ready to read the body. 0 ok;
  * NET_ERR/NET_EINTR with description in err. */
