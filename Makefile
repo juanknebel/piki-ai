@@ -59,6 +59,8 @@ SAN := -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
 
 SRC_test_buf  := tests/test_buf.c src/buf.c
 SRC_test_md   := tests/test_md.c src/md.c src/buf.c
+SRC_test_web  := tests/test_web.c src/web.c src/http.c src/net.c \
+                 src/json.c src/buf.c
 SRC_test_json := tests/test_json.c src/json.c src/buf.c
 SRC_test_http := tests/test_http.c src/http.c src/buf.c src/net.c
 SRC_test_sse  := tests/test_sse.c src/sse.c src/buf.c
@@ -78,6 +80,11 @@ $(B)/test_md: $(SRC_test_md) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_md)
 $(B)/test_md.asan: $(SRC_test_md) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_md)
+
+$(B)/test_web: $(SRC_test_web) src/certs.h | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_web) $(LIBS)
+$(B)/test_web.asan: $(SRC_test_web) src/certs.h | $(B)
+	$(CC) $(WARN) $(CPPFLAGS) $(SAN) -Isrc -o $@ $(SRC_test_web) $(LIBS)
 
 $(B)/test_json: $(SRC_test_json) | $(B)
 	$(CC) $(WARN) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $(SRC_test_json)
@@ -121,6 +128,7 @@ $(B)/test_api.asan: $(SRC_test_api) | $(B)
 
 TESTBINS := $(B)/test_buf $(B)/test_buf.asan \
             $(B)/test_md $(B)/test_md.asan \
+            $(B)/test_web $(B)/test_web.asan \
             $(B)/test_json $(B)/test_json.asan \
             $(B)/test_http $(B)/test_http.asan \
             $(B)/test_sse $(B)/test_sse.asan \
@@ -135,6 +143,8 @@ test: $(TESTBINS)
 	@$(B)/test_buf.asan
 	@$(B)/test_md
 	@$(B)/test_md.asan
+	@$(B)/test_web
+	@$(B)/test_web.asan
 	@$(B)/test_json
 	@$(B)/test_json.asan
 	@$(B)/test_http
