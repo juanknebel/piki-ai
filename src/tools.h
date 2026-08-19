@@ -8,9 +8,10 @@
  * the model) into out. They return 0 ok, -1 error (the error text is sent
  * to the model anyway). */
 
-/* JSON with the definition of the 3 tools in OpenAI format, for the
- * "tools" field of the request. */
-extern const char *const TOOLS_SCHEMA;
+/* The tool definitions in OpenAI format, as array items WITHOUT the
+ * surrounding brackets: the caller assembles the "tools" array per turn
+ * (optionally appending the web tools from web.h). */
+extern const char *const TOOLS_ITEMS;
 
 /* Runs the tool `name` with `args_json` (the argument string the model
  * sends). Writes the result into out. requires_confirm is set to 1 if the

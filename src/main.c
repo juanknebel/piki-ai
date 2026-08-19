@@ -358,6 +358,7 @@ static int agent_turn(const provider_t *pv, const char *model,
 {
     buf_t msgs;
     buf_t acc;            /* all assistant text, kept if stopped early */
+    buf_t schema;         /* tools array assembled for this turn */
     chat_msg *win;
     size_t wn, i;
     long step, limit = max_steps;
@@ -368,6 +369,10 @@ static int agent_turn(const provider_t *pv, const char *model,
         usage->prompt_tokens = 0;
         usage->completion_tokens = 0;
     }
+    buf_init(&schema);
+    buf_putc(&schema, '[');
+    buf_puts(&schema, TOOLS_ITEMS);
+    buf_putc(&schema, ']');
 
     /* initial message array from the history window */
     buf_init(&msgs);
@@ -378,6 +383,7 @@ static int agent_turn(const provider_t *pv, const char *model,
         snprintf(err, errlen, "out of memory");
         buf_free(&msgs);
         buf_free(&acc);
+        buf_free(&schema);
         return -1;
     }
     wn = chat_window(chat, lim.max_msgs, lim.max_bytes, win, chat->n + 1);
@@ -420,7 +426,7 @@ static int agent_turn(const provider_t *pv, const char *model,
         {
             token_usage step_u = {0, 0};
 
-            rc = api_agent_turn(pv, model, msgs.data, TOOLS_SCHEMA, web,
+            rc = api_agent_turn(pv, model, msgs.data, schema.data, web,
                                 &step_u, &turn, err, errlen);
             if (usage) {
                 usage->prompt_tokens += step_u.prompt_tokens;
@@ -526,6 +532,7 @@ static int agent_turn(const provider_t *pv, const char *model,
 done:
     buf_free(&msgs);
     buf_free(&acc);
+    buf_free(&schema);
     return ret;
 }
 

@@ -13,8 +13,8 @@
 #define MAX_MATCHES 100      /* search_files */
 #define MAX_DEPTH   8        /* search_files recursion */
 
-const char *const TOOLS_SCHEMA =
-"[{\"type\":\"function\",\"function\":{"
+const char *const TOOLS_ITEMS =
+"{\"type\":\"function\",\"function\":{"
 "\"name\":\"read_file\",\"description\":\"Reads a text file and "
 "returns its content.\",\"parameters\":{\"type\":\"object\","
 "\"properties\":{\"path\":{\"type\":\"string\",\"description\":\"File "
@@ -51,7 +51,7 @@ const char *const TOOLS_SCHEMA =
 "\"name\":\"run_command\",\"description\":\"Runs a shell command "
 "and returns its combined output (stdout+stderr).\",\"parameters\":"
 "{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"}},"
-"\"required\":[\"command\"]}}}]";
+"\"required\":[\"command\"]}}}";
 
 int tool_is_dangerous(const char *name)
 {
