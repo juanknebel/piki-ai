@@ -22,6 +22,10 @@
  *   max_agent_steps = 12       # tool-call rounds before asking to continue
  *   check_updates = 1          # 0 disables the daily release check
  *
+ *   [search]                   # client-side web search (web_search tool)
+ *   engine = ddg               # ddg | brave (brave not implemented yet)
+ *   key =                      # API key for engines that need one
+ *
  * Lines starting with # or ; are comments. Unknown keys and sections
  * are ignored (forward compatibility). */
 
@@ -32,7 +36,8 @@ typedef struct {
     char url[256];
     char key[256];
     char model[128];          /* default model for this provider ("" = none) */
-    char web_search[16];      /* "" = detect by host; none|plugin|responses */
+    char web_search[16];      /* "" = detect by host;
+                                 none|plugin|responses|local */
 } cfg_provider;
 
 typedef struct {
@@ -45,6 +50,8 @@ typedef struct {
     long max_context_tokens;  /* rough cap on what is sent per turn */
     long max_agent_steps;     /* tool rounds before asking to continue */
     int check_updates;        /* 0 disables the daily release check */
+    char search_engine[16];   /* [search] engine: ddg|brave ("" = ddg) */
+    char search_key[256];     /* [search] key (engines that need one) */
 } config_t;
 
 void config_defaults(config_t *c);

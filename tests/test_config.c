@@ -122,6 +122,28 @@ int main(void)
     expect_fail("[provider \"nombre-absurdamente-largo-que-no-entra-"
                 "en-el-campo\"]\n");
 
+    /* [search] section */
+    config_defaults(&c);
+    CHECK(config_parse(&c,
+        "[provider \"x\"]\n"
+        "url = https://h/v1\n"
+        "web_search = local\n"
+        "[search]\n"
+        "engine = brave\n"
+        "key = BSAxyz\n", err, sizeof err) == 0);
+    CHECK(strcmp(config_provider(&c, "x")->web_search, "local") == 0);
+    CHECK(strcmp(c.search_engine, "brave") == 0);
+    CHECK(strcmp(c.search_key, "BSAxyz") == 0);
+    config_defaults(&c);
+    CHECK(config_parse(&c, "[search]\nengine = ddg\n",
+                       err, sizeof err) == 0);
+    CHECK(strcmp(c.search_engine, "ddg") == 0 && !c.search_key[0]);
+    expect_fail("[search]\nengine = google\n");
+    /* unknown sections still parse as before */
+    config_defaults(&c);
+    CHECK(config_parse(&c, "[future]\nwhatever = 1\n",
+                       err, sizeof err) == 0);
+
     if (fails) {
         fprintf(stderr, "test_config: %d failures\n", fails);
         return 1;

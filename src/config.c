@@ -9,7 +9,8 @@
 
 #include "buf.h"
 
-enum { SECT_NONE, SECT_DEFAULTS, SECT_PROVIDER, SECT_UNKNOWN };
+enum { SECT_NONE, SECT_DEFAULTS, SECT_PROVIDER, SECT_SEARCH,
+       SECT_UNKNOWN };
 
 void config_defaults(config_t *c)
 {
@@ -124,6 +125,8 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
                 }
                 c->nproviders++;
                 sect = SECT_PROVIDER;
+            } else if (strcmp(s, "search") == 0) {
+                sect = SECT_SEARCH;
             } else {
                 sect = SECT_UNKNOWN; /* ignore content */
             }
@@ -195,12 +198,31 @@ int config_parse(config_t *c, const char *text, char *err, size_t errlen)
             else if (strcmp(key, "web_search") == 0) {
                 if (strcmp(val, "none") != 0 &&
                     strcmp(val, "plugin") != 0 &&
-                    strcmp(val, "responses") != 0) {
+                    strcmp(val, "responses") != 0 &&
+                    strcmp(val, "local") != 0) {
                     seterr(err, errlen, "invalid web_search", lineno);
                     return -1;
                 }
                 bad = copystr(prov->web_search,
                               sizeof prov->web_search, val);
+            }
+            if (bad) {
+                seterr(err, errlen, "value too long", lineno);
+                return -1;
+            }
+        } else if (sect == SECT_SEARCH) {
+            int bad = 0;
+
+            if (strcmp(key, "engine") == 0) {
+                if (strcmp(val, "ddg") != 0 &&
+                    strcmp(val, "brave") != 0) {
+                    seterr(err, errlen, "invalid engine", lineno);
+                    return -1;
+                }
+                bad = copystr(c->search_engine,
+                              sizeof c->search_engine, val);
+            } else if (strcmp(key, "key") == 0) {
+                bad = copystr(c->search_key, sizeof c->search_key, val);
             }
             if (bad) {
                 seterr(err, errlen, "value too long", lineno);
