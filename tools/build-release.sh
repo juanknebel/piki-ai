@@ -19,7 +19,7 @@ OPENSSL_VER=3.5.1
 JOBS=$(nproc 2>/dev/null || echo 2)
 
 SRCS="src/main.c src/buf.c src/net.c src/http.c src/json.c src/sse.c \
-      src/api.c src/chat.c src/config.c src/term.c src/edit.c src/tools.c src/md.c"
+      src/api.c src/chat.c src/config.c src/term.c src/edit.c src/tools.c src/md.c src/web.c"
 
 build_openssl() { # $1 arch  $2 CC  $3 Configure target
     PREFIX=$DEPS/openssl-$1

@@ -22,7 +22,7 @@ endif
 B    := build
 OBJS := $(B)/buf.o $(B)/net.o $(B)/http.o $(B)/json.o $(B)/sse.o \
         $(B)/api.o $(B)/chat.o $(B)/config.o $(B)/term.o $(B)/edit.o \
-        $(B)/tools.o $(B)/md.o
+        $(B)/tools.o $(B)/md.o $(B)/web.o
 
 all: $(B)/piki $(B)/tlsprobe
 
