@@ -31,7 +31,14 @@ Talks to any OpenAI-compatible API endpoint: OpenRouter (by default),
 
 ## Install (prebuilt binary)
 
-Download the latest release with `curl`, make it executable, and put it in
+On Linux, `tools/install.sh` downloads the latest release, auto-detects
+32 vs 64 bit, and installs it as `~/.local/bin/piki`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/juanknebel/piki-ai/main/tools/install.sh | sh
+```
+
+Or download a specific asset by hand, make it executable, and put it in
 your `PATH`:
 
 ```sh
