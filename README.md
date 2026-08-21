@@ -242,12 +242,14 @@ section (`none`, `plugin`, `responses` or `local`):
   Equivalent to appending `:online` to the model slug.
 - **Meta Model API** (`responses`): the turn is sent through the
   provider's Responses API (`{base}/responses`) with its built-in
-  `web_search` tool, forced via `tool_choice` so the switch is
-  consistent: web on means every answer is grounded in a fresh search,
-  web off means the tool is not even declared. These turns are
-  non-streaming (like agent turns), print their sources underneath, and
-  skip piki's local tools while web is on. Any OpenAI-compatible host
-  with a Responses endpoint works via `web_search = responses`.
+  `web_search` tool declared and `tool_choice` left as `"auto"` --
+  Meta's API rejects any forced/named `tool_choice` with HTTP 400, so
+  web on makes the tool available and the model decides per turn
+  whether to search; web off means the tool is not even declared. These
+  turns are non-streaming (like agent turns), print their sources
+  underneath, and skip piki's local tools while web is on. Any
+  OpenAI-compatible host with a Responses endpoint works via
+  `web_search = responses`.
 - **Everyone else** (`local`): piki does the searching itself. The model
   gets two extra agent tools — `web_search` (DuckDuckGo, no key or
   account needed) and `fetch_url` (downloads a page and hands back its

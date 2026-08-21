@@ -259,8 +259,11 @@ done:
 
 /* Request body for {base}/responses: the history goes in "input" as an
  * array of role/content messages and web search is a built-in tool.
- * tool_choice forces the search so /web behaves like OpenRouter's
- * plugin: on = every answer is grounded, off = the tool does not exist. */
+ * tool_choice is left as "auto" -- Meta's API only accepts that value on
+ * both Chat Completions and the Responses API; "none", "required" and any
+ * named/object tool_choice (e.g. forcing web_search) return HTTP 400. So
+ * /web on only makes the tool available, it cannot force every turn to
+ * search; the model decides. */
 static void build_responses_body(buf_t *b, const char *model,
                                  const chat_msg *msgs, size_t nmsgs)
 {
@@ -279,7 +282,7 @@ static void build_responses_body(buf_t *b, const char *model,
         buf_putc(b, '}');
     }
     buf_puts(b, "],\"tools\":[{\"type\":\"web_search\"}],"
-                "\"tool_choice\":{\"type\":\"web_search\"}}");
+                "\"tool_choice\":\"auto\"}");
 }
 
 /* Appends "title <url>" to sources unless that url is already there. */
