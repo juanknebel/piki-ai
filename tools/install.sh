@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the latest piki release binary into $HOME/.local/bin.
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/juanknebel/piki-ai/master/tools/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/juanknebel/piki-ai/main/tools/install.sh | sh
 #
 # Linux only. Auto-detects 32 vs 64 bit userspace and downloads the
 # matching static release asset (piki-linux-x86_64 or piki-linux-i686)
